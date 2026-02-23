@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/activitysimulator/db" VERSION="20260223" COMMENT="XMLDB file for local_activitysimulator"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd">
+  <TABLES>
+
+    <!--
+      local_activitysimulator_terms
+      One row per simulated term. A term corresponds to a Moodle course category
+      containing all courses for that term. The course_profile determines section
+      count, activity types, and window schedule.
+    -->
+    <TABLE NAME="local_activitysimulator_terms" COMMENT="Simulated terms (course categories)">
+      <FIELDS>
+        <FIELD NAME="id"              TYPE="int"  LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="categoryid"      TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="FK to Moodle course_categories.id"/>
+        <FIELD NAME="course_profile"  TYPE="char" LENGTH="64" NOTNULL="true" COMMENT="Profile class name, e.g. one_week_intensive"/>
+        <FIELD NAME="week_number"     TYPE="int"  LENGTH="2"  NOTNULL="true" COMMENT="ISO week number of year"/>
+        <FIELD NAME="year"            TYPE="int"  LENGTH="4"  NOTNULL="true"/>
+        <FIELD NAME="start_timestamp" TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Unix timestamp of term start (Monday 00:00)"/>
+        <FIELD NAME="end_timestamp"   TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Unix timestamp of term end"/>
+        <FIELD NAME="status"          TYPE="char" LENGTH="16" NOTNULL="true" DEFAULT="pending" COMMENT="pending, active, complete"/>
+        <FIELD NAME="backfilled"      TYPE="int"  LENGTH="1"  NOTNULL="true" DEFAULT="0" COMMENT="1 if past windows were backfilled on creation"/>
+        <FIELD NAME="timecreated"     TYPE="int"  LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="timemodified"    TYPE="int"  LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_status"          UNIQUE="false" FIELDS="status"/>
+        <INDEX NAME="idx_year_week"       UNIQUE="false" FIELDS="year, week_number"/>
+        <INDEX NAME="idx_start_timestamp" UNIQUE="false" FIELDS="start_timestamp"/>
+      </INDEXES>
+    </TABLE>
+
+    <!--
+      local_activitysimulator_windows
+      One row per activity window within a term. A window is an abstract time
+      slot (e.g. "Monday AM", "Week 3 early") defined by the course profile.
+      The daily task finds pending windows whose scheduled_time has passed and
+      runs them. Completed windows are skipped unless force_rerun is set.
+    -->
+    <TABLE NAME="local_activitysimulator_windows" COMMENT="Activity windows within a term">
+      <FIELDS>
+        <FIELD NAME="id"             TYPE="int"  LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="termid"         TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="FK to local_activitysimulator_terms.id"/>
+        <FIELD NAME="period_index"   TYPE="int"  LENGTH="4"  NOTNULL="true" COMMENT="Abstract sequence number; course profile interprets meaning"/>
+        <FIELD NAME="window_key"     TYPE="char" LENGTH="32" NOTNULL="true" COMMENT="e.g. mon_am, mon_pm, week3_early"/>
+        <FIELD NAME="window_label"   TYPE="char" LENGTH="128" NOTNULL="true" COMMENT="Human-readable label for admin UI and logs"/>
+        <FIELD NAME="scheduled_time" TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Target Unix timestamp for this window's activities"/>
+        <FIELD NAME="status"         TYPE="char" LENGTH="16" NOTNULL="true" DEFAULT="pending" COMMENT="pending, complete, skipped"/>
+        <FIELD NAME="force_rerun"    TYPE="int"  LENGTH="1"  NOTNULL="true" DEFAULT="0" COMMENT="1 = re-run even if complete (test mode only)"/>
+        <FIELD NAME="simulated_at"   TYPE="int"  LENGTH="10" NOTNULL="false" COMMENT="Unix timestamp when window was actually simulated"/>
+        <FIELD NAME="notes"          TYPE="text"             NOTNULL="false" COMMENT="Error info, override notes, etc."/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_termid" TYPE="foreign" FIELDS="termid" REFTABLE="local_activitysimulator_terms" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_termid_status"     UNIQUE="false" FIELDS="termid, status"/>
+        <INDEX NAME="idx_scheduled_time"    UNIQUE="false" FIELDS="scheduled_time"/>
+        <INDEX NAME="idx_termid_period_key" UNIQUE="true"  FIELDS="termid, period_index, window_key"/>
+      </INDEXES>
+    </TABLE>
+
+    <!--
+      local_activitysimulator_learner_profiles
+      One row per simulated user. The diligence_scalar is assigned once at user
+      creation time from a truncated normal distribution within the group's
+      configured range, and persists across all terms. The scalar_source field
+      accommodates future import of profiles derived from real learner data.
+    -->
+    <TABLE NAME="local_activitysimulator_learner_profiles" COMMENT="Persistent diligence profiles for simulated users">
+      <FIELDS>
+        <FIELD NAME="id"               TYPE="int"    LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="userid"           TYPE="int"    LENGTH="10" NOTNULL="true" COMMENT="FK to Moodle user.id"/>
+        <FIELD NAME="group_type"       TYPE="char"   LENGTH="16" NOTNULL="true" COMMENT="overachiever, standard, intermittent, failing"/>
+        <FIELD NAME="diligence_scalar" TYPE="number" LENGTH="4"  DECIMALS="3" NOTNULL="true" COMMENT="Persistent engagement multiplier, e.g. 0.847"/>
+        <FIELD NAME="scalar_source"    TYPE="char"   LENGTH="16" NOTNULL="true" DEFAULT="generated" COMMENT="generated or imported"/>
+        <FIELD NAME="timecreated"      TYPE="int"    LENGTH="10" NOTNULL="true"/>
+        <FIELD NAME="timemodified"     TYPE="int"    LENGTH="10" NOTNULL="true"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_userid" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_userid"     UNIQUE="true"  FIELDS="userid"/>
+        <INDEX NAME="idx_group_type" UNIQUE="false" FIELDS="group_type"/>
+      </INDEXES>
+    </TABLE>
+
+    <!--
+      local_activitysimulator_run_log
+      One row per simulated action (user x window x course x activity).
+      Provides ground-truth audit trail for verifying analytics results.
+      action_class distinguishes passive (view) from active (submit) actions,
+      supporting the view/engage split in reporting. window_index enables
+      temporal decay analysis across the course lifecycle.
+      Log rotation is deferred to a later phase.
+    -->
+    <TABLE NAME="local_activitysimulator_run_log" COMMENT="Audit log of every simulated action">
+      <FIELDS>
+        <FIELD NAME="id"             TYPE="int"  LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="termid"         TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="FK to local_activitysimulator_terms.id"/>
+        <FIELD NAME="windowid"       TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="FK to local_activitysimulator_windows.id"/>
+        <FIELD NAME="window_index"   TYPE="int"  LENGTH="4"  NOTNULL="true" COMMENT="0-based sequence of window within term, for decay analysis"/>
+        <FIELD NAME="courseid"       TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="FK to Moodle course.id"/>
+        <FIELD NAME="userid"         TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="FK to Moodle user.id"/>
+        <FIELD NAME="action_type"    TYPE="char" LENGTH="32" NOTNULL="true" COMMENT="e.g. view_page, attempt_quiz, submit_assignment, post_forum"/>
+        <FIELD NAME="action_class"   TYPE="char" LENGTH="8"  NOTNULL="true" COMMENT="passive or active"/>
+        <FIELD NAME="cmid"           TYPE="int"  LENGTH="10" NOTNULL="false" COMMENT="FK to Moodle course_modules.id; null for course-level actions"/>
+        <FIELD NAME="simulated_time" TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Backdated Unix timestamp written to Moodle logs/grades"/>
+        <FIELD NAME="outcome"        TYPE="char" LENGTH="16" NOTNULL="false" COMMENT="e.g. score_90, submitted, skipped"/>
+        <FIELD NAME="timecreated"    TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Actual wall-clock time this record was inserted"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_termid"   TYPE="foreign" FIELDS="termid"   REFTABLE="local_activitysimulator_terms"   REFFIELDS="id"/>
+        <KEY NAME="fk_windowid" TYPE="foreign" FIELDS="windowid" REFTABLE="local_activitysimulator_windows" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_termid"       UNIQUE="false" FIELDS="termid"/>
+        <INDEX NAME="idx_windowid"     UNIQUE="false" FIELDS="windowid"/>
+        <INDEX NAME="idx_courseid"     UNIQUE="false" FIELDS="courseid"/>
+        <INDEX NAME="idx_userid"       UNIQUE="false" FIELDS="userid"/>
+        <INDEX NAME="idx_action_class" UNIQUE="false" FIELDS="action_class"/>
+        <INDEX NAME="idx_simtime"      UNIQUE="false" FIELDS="simulated_time"/>
+      </INDEXES>
+    </TABLE>
+
+  </TABLES>
+</XMLDB>
