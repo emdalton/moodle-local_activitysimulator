@@ -158,3 +158,177 @@ $string['status_window_skipped']       = 'Window already complete, skipped: {$a}
 $string['status_window_forced']        = 'Window re-run forced (test mode): {$a}';
 $string['status_backfill_started']     = 'Backfill started: {$a} elapsed windows to process.';
 $string['status_backfill_complete']    = 'Backfill complete: {$a} windows simulated.';
+
+// =========================================================================
+// GENERATIVE TEXT DATA
+//
+// The strings below are used by classes/data/name_generator.php to produce
+// synthetic names, course titles, and forum post bodies. They are stored
+// here rather than hardcoded in PHP so that the plugin can be adapted for
+// different languages, institutional styles, or content policies without
+// touching class files.
+//
+// FORMAT: each string is a pipe-delimited list of items. name_generator.php
+// explodes on '|' to get an array. Do not add spaces around the pipe.
+//
+// HOW TO SUBSTITUTE YOUR OWN TEXT
+// --------------------------------
+// To replace these strings with custom content, create a lang override file
+// at:
+//
+//   {moodledata}/lang/en_local/local_activitysimulator.php
+//
+// (where 'en_local' is your site's language pack override folder — adjust
+// for your locale). In that file, redefine only the keys you want to change.
+// Moodle's string system will use your overrides in preference to these
+// defaults. You do not need to modify the plugin files.
+//
+// NOTES ON FORUM POST TEXT
+// ------------------------
+// Forum post bodies use 'gen_post_verses' (see below). The 26 verses cycle
+// repeatedly — most installations will have far more posts than verses, so
+// the same verse will appear in many posts. This is intentional. The content
+// of simulated posts has no semantic meaning and is not expected to be
+// unique. Analytics tools operate on authorship, timing, and submission
+// metadata, not post content.
+//
+// The verses are drawn from Edward Lear's nonsense alphabet (public domain).
+// They were chosen because they are short, memorable, and clearly synthetic
+// — it is immediately obvious to anyone browsing the site that the data is
+// simulated, which reduces the risk of the data being mistaken for real
+// student work.
+//
+// If you want posts that look more like academic writing, replace
+// 'gen_post_verses' with 26 short paragraphs of Lorem Ipsum or similar.
+// Keep exactly 26 entries (one per letter) so the cycling behaviour is
+// predictable. If you use fewer, the generator will still work but the
+// cycling will repeat sooner.
+// =========================================================================
+
+// -------------------------------------------------------------------------
+// Forum post bodies — 26 Lear nonsense verses, one per letter of the
+// alphabet. Used by name_generator::get_post_text(). Cycles silently when
+// all 26 are exhausted.
+//
+// Source: Edward Lear, illustrated alphabet (published in various collections
+// including "Laughable Lyrics", 1877). Public domain.
+// -------------------------------------------------------------------------
+
+$string['gen_post_verses'] =
+    'A was an ape, who stole some white tape, and tied up his toes in four beautiful bows.|' .
+    'B was a bat, who slept all the day, and fluttered about when the sun went away.|' .
+    'C was a camel: you rode on his hump; and if you fell off, you came down such a bump!|' .
+    'D was a dove, who lived in a wood, with such pretty soft wings, and so gentle and good!|' .
+    'E was an eagle, who sat on the rocks, and looked down on the fields and the-far-away flocks.|' .
+    'F was a fan made of beautiful stuff; and when it was used, it went puffy-puff-puff!|' .
+    'G was a gooseberry, perfectly red; to be made into jam, and eaten with bread.|' .
+    'H was a heron, who stood in a stream: the length of his neck and his legs was extreme.|' .
+    'I was an inkstand, which stood on a table, with a nice pen to write with when we are able.|' .
+    'J was a jug, so pretty and white, with fresh water in it at morning and night.|' .
+    'K was a kingfisher: quickly he flew, so bright and so pretty!— green, purple, and blue.|' .
+    'L was a lily, so white and so sweet! To see it and smell it was quite a nice treat.|' .
+    'M was a man, who walked round and round; and he wore a long coat that came down to the ground.|' .
+    'N was a nut so smooth and so brown! And when it was ripe, it fell tumble-dum-down.|' .
+    'O was an oyster, who lived in his shell: if you let him alone, he felt perfectly well.|' .
+    'P was a polly, all red, blue, and green,— the most beautiful polly that ever was seen.|' .
+    'Q was a quill made into a pen; but I do not know where, and I cannot say when.|' .
+    'R was a rattlesnake, rolled up so tight, those who saw him ran quickly, for fear he should bite.|' .
+    'S was a screw to screw down a box; and then it was fastened without any locks.|' .
+    'T was a thimble, of silver so bright! When placed on the finger, it fitted so tight!|' .
+    'U was an upper-coat, woolly and warm, to wear over all In the snow or the storm.|' .
+    'V was a veil with a border upon it, and a ribbon to tie it all round a pink bonnet.|' .
+    'W was a watch, where, in letters of gold, the hour of the day you might always behold.|' .
+    'X was King Xerxes, who wore on his head a mighty large turban, green, yellow, and red.|' .
+    'Y was a yak, from the land of Thibet: except his white tail, he was all black as jet.|' .
+    'Z was a zebra, all striped white and black; and if he were tame, you might ride on his back.';
+
+// -------------------------------------------------------------------------
+// Given names (first names) — used by name_generator::get_firstname().
+// Drawn from a diverse range of cultural backgrounds to produce realistic
+// synthetic populations.
+//
+// To add names: append to the pipe-delimited list.
+// To replace entirely: override this key in your lang override file.
+// -------------------------------------------------------------------------
+
+$string['gen_given_names'] =
+    'Adriana|Ahmed|Aiko|Alejandro|Amara|Amelia|Anastasia|Andre|Anita|Antonio|' .
+    'Asha|Beatriz|Benjamin|Brendan|Caitlin|Carlos|Carmen|Catherine|Chioma|Clara|' .
+    'Daisuke|Daniel|Danielle|David|Deepa|Delia|Dmitri|Elena|Elias|Elizabeth|' .
+    'Emeka|Emily|Enrique|Fatima|Felix|Fiona|Francisco|Gabriel|Giulia|Grace|' .
+    'Hannah|Hassan|Helena|Ibrahim|Ingrid|Isabel|Ivan|Jae-won|James|Jana|' .
+    'Javier|Jennifer|Jonas|Jorge|Josef|Julia|Julien|Karin|Kaito|Kemi|' .
+    'Khalid|Kofi|Laila|Laura|Lena|Leon|Leona|Liam|Lila|Lin|' .
+    'Luisa|Magnus|Malik|Maria|Marta|Mateo|Maya|Mei|Miguel|Miriam|' .
+    'Mohamed|Naomi|Natalia|Nathan|Nia|Nikolai|Nina|Nora|Olga|Oliver|' .
+    'Olivia|Omar|Priya|Rafael|Rania|Rebecca|Riku|Rosa|Samuel|Sara|' .
+    'Sebastian|Selma|Shreya|Sofia|Stefan|Sun-hee|Tariq|Tomas|Valentina|Yuki';
+
+// -------------------------------------------------------------------------
+// Family names (surnames) — used by name_generator::get_lastname().
+// -------------------------------------------------------------------------
+
+$string['gen_family_names'] =
+    'Abramowitz|Adeyemi|Agarwal|Andersen|Antonescu|Araujo|Asante|Baek|Bakr|Banerjee|' .
+    'Bergstrom|Boateng|Bouchard|Castillo|Cheung|Christodoulou|Czajkowski|Dalton|Diallo|Diaz|' .
+    'Dubois|Ekwueme|Eriksson|Esposito|Ferreira|Fischer|Fitzpatrick|Fontaine|Fonseca|Garcia|' .
+    'Garza|Guerrero|Gupta|Haddad|Halvorsen|Hansen|Hassan|Hernandez|Hoffmann|Huang|' .
+    'Ivanova|Janssen|Johansson|Kamau|Kaur|Khoury|Kim|Kowalski|Kumar|Larsen|' .
+    'Laurent|Levi|Lima|Liu|Lopez|Madeira|Mahfouz|Maki|Marino|Martinez|' .
+    'Mendoza|Moreira|Moretti|Mueller|Murphy|Nakamura|Ndiaye|Nguyen|Nielsen|Nkosi|' .
+    'Novak|Obi|Okonkwo|Oliveira|Osei|Park|Patel|Pereira|Petrov|Popescu|' .
+    'Ramirez|Reinholt|Rivera|Rodrigues|Romano|Rossi|Russo|Saito|Salazar|Santos|' .
+    'Schmidt|Shkreli|Silva|Smirnov|Svensson|Tanaka|Torres|Tremblay|Vance|Vargas|' .
+    'Vasquez|Vogel|Wang|Weber|Williams|Yamamoto|Yilmaz|Zaborski|Zhu|Zimmermann';
+
+// -------------------------------------------------------------------------
+// Course name word lists — used by name_generator::get_course_name() to
+// produce academic-sounding course titles in the form:
+//   "[qualifier] [subject] [preposition] [discipline]"
+// e.g. "Advanced Studies in Comparative Literature"
+//
+// Adapted from local_pseudonymise (Elizabeth Dalton / GPL).
+// -------------------------------------------------------------------------
+
+$string['gen_course_qualifiers'] =
+    'Advanced|Applied|Comparative|Contemporary|Critical|Elementary|Experimental|' .
+    'Foundations of|Independent Study in|Introduction to|Perspectives on|' .
+    'Principles of|Selected Topics in|Special Problems in|Survey of|Topics in';
+
+$string['gen_course_subjects'] =
+    'Analysis|Communication|Composition|Design|Development|History|Management|' .
+    'Methods|Perspectives|Practice|Research|Studies|Theory|Writing';
+
+$string['gen_course_prepositions'] =
+    'and|for|in|of|with';
+
+$string['gen_course_disciplines'] =
+    'Analytical Chemistry|Applied Ethics|Biochemistry|Biomedical Engineering|' .
+    'Business Administration|Cell Biology|Clinical Psychology|Cognitive Science|' .
+    'Comparative Literature|Computer Science|Creative Writing|Cultural Studies|' .
+    'Data Science|Development Economics|Digital Media|Early Childhood Education|' .
+    'Educational Technology|Environmental Policy|Environmental Science|Evolutionary Biology|' .
+    'Forensic Accounting|Gender Studies|Global Health|Human Geography|Human Nutrition|' .
+    'Industrial Engineering|Information Systems|International Relations|Labour Economics|' .
+    'Linguistics|Marine Biology|Media Studies|Medical Imaging|Microbiology|' .
+    'Molecular Genetics|Musculoskeletal Employment|Neuroscience|Nursing Practice|' .
+    'Operations Research|Organizational Behaviour|Palaeontology|Philosophy of Mind|' .
+    'Political Economy|Public Administration|Public Health|Quantum Mechanics|' .
+    'Religious Studies|Social Policy|Sociology|Software Engineering|Sports Science|' .
+    'Statistical Methods|Urban Planning|Visual Arts|Wildlife Conservation';
+
+// -------------------------------------------------------------------------
+// Section name adjectives and nouns — used by name_generator::get_section_name()
+// to produce short descriptive section labels.
+// e.g. "Fundamental Structures", "Applied Frameworks"
+// -------------------------------------------------------------------------
+
+$string['gen_section_adjectives'] =
+    'Applied|Comparative|Core|Critical|Elementary|Essential|Foundational|' .
+    'Fundamental|Integrated|Intermediate|Introductory|Key|Practical|' .
+    'Primary|Theoretical';
+
+$string['gen_section_nouns'] =
+    'Approaches|Concepts|Contexts|Dimensions|Elements|Frameworks|' .
+    'Methods|Models|Perspectives|Practices|Principles|Processes|' .
+    'Structures|Themes|Topics';
