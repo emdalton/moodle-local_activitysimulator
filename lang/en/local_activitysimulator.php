@@ -109,6 +109,12 @@ $string['group_pct_intermittent']  = 'Intermittent (%)';
 $string['group_pct_failing']       = 'Failing (%)';
 $string['group_pct_desc']          = 'Percentage of the student pool assigned to this group.';
 
+$string['group_count_overachiever'] = 'Overachievers: pool size';
+$string['group_count_standard']     = 'Standard: pool size';
+$string['group_count_intermittent'] = 'Intermittent: pool size';
+$string['group_count_failing']      = 'Failing: pool size';
+$string['group_count_desc']         = 'Total number of simulated users to create in this group. Determines the user pool size, independent of how many are enrolled per course.';
+
 // -------------------------------------------------------------------------
 // Settings — diligence scalars.
 // -------------------------------------------------------------------------

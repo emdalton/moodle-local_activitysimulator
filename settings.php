@@ -162,20 +162,51 @@ if ($hassiteconfig) {
         PARAM_INT
     ));
 
-    // Group distribution percentages — must sum to 100.
-    // Validated (with a warning) in term_manager.php at term creation time.
+    // -------------------------------------------------------------------------
+    // Learner group distribution.
+    //
+    // Two related but distinct controls per group:
+    //
+    //   group_pct_*   — percentage of each course's enrolments drawn from
+    //                   this group. Must sum to 100. Used by term_manager.
+    //
+    //   group_count_* — absolute number of users to create in this group.
+    //                   Determines the total user pool size. Used by
+    //                   user_manager. Independent of enrolment distribution.
+    // -------------------------------------------------------------------------
+
     $settings->add(new admin_setting_heading(
         'local_activitysimulator/heading_groups',
         get_string('heading_groups', 'local_activitysimulator'),
         get_string('heading_groups_desc', 'local_activitysimulator')
     ));
 
+    // Enrolment distribution percentages — must sum to 100.
+    // Validated (with a warning) in term_manager.php at term creation time.
     foreach (['overachiever', 'standard', 'intermittent', 'failing'] as $group) {
         $default = ($group === 'standard') ? 70 : 10;
         $settings->add(new admin_setting_configtext(
             'local_activitysimulator/group_pct_' . $group,
             get_string('group_pct_' . $group, 'local_activitysimulator'),
             get_string('group_pct_desc', 'local_activitysimulator'),
+            $default,
+            PARAM_INT
+        ));
+    }
+
+    // User pool counts — absolute number of users to create per group.
+    $count_defaults = [
+        'overachiever' => 20,
+        'standard'     => 140,
+        'intermittent' => 20,
+        'failing'      => 20,
+    ];
+
+    foreach ($count_defaults as $group => $default) {
+        $settings->add(new admin_setting_configtext(
+            'local_activitysimulator/group_count_' . $group,
+            get_string('group_count_' . $group, 'local_activitysimulator'),
+            get_string('group_count_desc', 'local_activitysimulator'),
             $default,
             PARAM_INT
         ));
@@ -194,7 +225,7 @@ if ($hassiteconfig) {
     $diligence_defaults = [
         'overachiever'  => ['mean' => '0.94', 'stddev' => '0.05'],
         'standard'      => ['mean' => '0.73', 'stddev' => '0.08'],
-        'intermittent'  => ['mean' => '0.45', 'stddev' => '0.10'],
+        'intermittent'  => ['mean' => '0.45', 'stddev' => '0.1'],
         'failing'       => ['mean' => '0.18', 'stddev' => '0.09'],
     ];
 
