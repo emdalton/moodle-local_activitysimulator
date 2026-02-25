@@ -300,10 +300,18 @@ class student_actor {
     }
 
     /**
-     * Forum: active post, or passive read-only.
+     * Forum: read unread posts (passive), reply to some (active), post new (active).
      *
-     * Active path: post_forum (with generated text) + read_forum.
-     * Passive path: view_forum (browsed without posting).
+     * Queries forum_read and forum_posts at execution time to find posts this
+     * user has not yet read. Students who execute later in the window naturally
+     * see more unread posts from peers who executed earlier.
+     *
+     * For each unread post:
+     *   passive roll → write_forum_read() + read_forum logstore entry (relateduserid = post author)
+     *   if read: active roll → reply_forum logstore entry (relateduserid = post author)
+     *
+     * New post (active roll, independent of reads):
+     *   active roll → post_forum with generated text
      *
      * @return int
      */
@@ -314,8 +322,70 @@ class student_actor {
         int $window_index,
         base_learner_profile $profile
     ): int {
+        global $DB;
+
         $written = 0;
 
+        // --- Read unread posts ---
+        $sql = "SELECT fp.id AS postid, fp.userid AS authorid,
+                       fd.id AS discussionid, f.id AS forumid
+                  FROM {forum_posts} fp
+                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
+                  JOIN {forum} f ON f.id = fd.forum
+             LEFT JOIN {forum_read} fr ON fr.postid = fp.id AND fr.userid = :userid
+                 WHERE f.id = :forumid
+                   AND fp.userid != :userid2
+                   AND fr.id IS NULL
+              ORDER BY fp.created ASC";
+
+        $unread = $DB->get_records_sql($sql, [
+            'userid'  => $userid,
+            'forumid' => $activity->instanceid,
+            'userid2' => $userid,
+        ]);
+
+        foreach ($unread as $post) {
+            // Passive roll: read this post.
+            if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
+                continue;
+            }
+
+            // Mark read in Moodle's forum_read table.
+            $this->log_writer->write_forum_read(
+                $userid,
+                (int)$post->postid,
+                (int)$post->discussionid,
+                (int)$post->forumid
+            );
+
+            // Logstore entry with relateduserid for SNA.
+            $this->log_writer->write_action(
+                $userid,
+                $courseid,
+                'read_forum',
+                $activity,
+                (int)$post->postid,
+                null,
+                (int)$post->authorid
+            );
+            $written++;
+
+            // Active roll: reply to this post.
+            if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
+                $this->log_writer->write_action(
+                    $userid,
+                    $courseid,
+                    'reply_forum',
+                    $activity,
+                    (int)$post->postid,
+                    $this->namegen->get_post_text(),
+                    (int)$post->authorid
+                );
+                $written++;
+            }
+        }
+
+        // --- Post new content (independent active roll) ---
         if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
             $this->log_writer->write_action(
                 $userid,
@@ -325,17 +395,6 @@ class student_actor {
                 null,
                 $this->namegen->get_post_text()
             );
-            $written++;
-
-            // After posting, the student reads other posts.
-            if ($profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
-                $this->log_writer->write_action($userid, $courseid, 'read_forum', $activity);
-                $written++;
-            }
-
-        } else if ($profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
-            // Browsed the forum without posting.
-            $this->log_writer->write_action($userid, $courseid, 'view_forum', $activity);
             $written++;
         }
 

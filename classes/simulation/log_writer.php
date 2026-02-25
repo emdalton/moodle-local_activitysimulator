@@ -297,15 +297,19 @@ class log_writer {
      * This is the single method called by student_actor and instructor_actor
      * for every simulated action.
      *
-     * @param  int            $userid      Moodle user ID of the simulated user.
-     * @param  int            $courseid    Moodle course ID.
-     * @param  string         $action_type Action type key (must exist in EVENT_DEFINITIONS).
-     * @param  \stdClass|null $activity    Activity descriptor from content_scanner,
-     *                                    or null for course-level actions.
-     * @param  int|null       $objectid    ID of the specific object acted on
-     *                                    (e.g. quiz_attempt.id), or null.
-     * @param  string|null    $outcome     Optional outcome string for run_log
-     *                                    (e.g. 'score_90', 'submitted', 'skipped').
+     * @param  int            $userid         Moodle user ID of the simulated user.
+     * @param  int            $courseid       Moodle course ID.
+     * @param  string         $action_type    Action type key (must exist in EVENT_DEFINITIONS).
+     * @param  \stdClass|null $activity       Activity descriptor from content_scanner,
+     *                                        or null for course-level actions.
+     * @param  int|null       $objectid       ID of the specific object acted on
+     *                                        (e.g. quiz_attempt.id), or null.
+     * @param  string|null    $outcome        Optional outcome string for run_log
+     *                                        (e.g. 'score_90', 'submitted', 'skipped').
+     * @param  int|null       $relateduserid  For forum read/reply actions: the user ID
+     *                                        of the post author. Stored in the logstore
+     *                                        relateduserid column to enable SNA edge
+     *                                        reconstruction from log data alone.
      * @return int            ID of the inserted run_log record.
      */
     public function write_action(
@@ -314,7 +318,8 @@ class log_writer {
         string $action_type,
         ?\stdClass $activity = null,
         ?int $objectid = null,
-        ?string $outcome = null
+        ?string $outcome = null,
+        ?int $relateduserid = null
     ): int {
         $simulated_time = $this->random_timestamp();
 
@@ -324,7 +329,8 @@ class log_writer {
             $action_type,
             $activity,
             $objectid,
-            $simulated_time
+            $simulated_time,
+            $relateduserid
         );
 
         return $this->write_run_log(
@@ -335,6 +341,51 @@ class log_writer {
             $simulated_time,
             $outcome
         );
+    }
+
+    /**
+     * Inserts a row into Moodle's forum_read table, marking a post as read
+     * by the given user.
+     *
+     * This is separate from write_action() because forum_read is not a
+     * logstore table — it is Moodle's own forum tracking table that drives
+     * the unread post highlight in the forum UI. It must be populated for
+     * the forum UI to behave correctly and for SNA tools to query read
+     * relationships.
+     *
+     * Called for both student and instructor forum reads, once per unread
+     * post per user.
+     *
+     * @param  int $userid       The user who read the post.
+     * @param  int $postid       forum_posts.id
+     * @param  int $discussionid forum_discussions.id
+     * @param  int $forumid      forum.id
+     * @return void
+     */
+    public function write_forum_read(
+        int $userid,
+        int $postid,
+        int $discussionid,
+        int $forumid
+    ): void {
+        global $DB;
+
+        // Skip if already marked read — idempotent.
+        if ($DB->record_exists('forum_read', ['userid' => $userid, 'postid' => $postid])) {
+            return;
+        }
+
+        $now = $this->random_timestamp();
+
+        $record = new \stdClass();
+        $record->userid       = $userid;
+        $record->forumid      = $forumid;
+        $record->discussionid = $discussionid;
+        $record->postid       = $postid;
+        $record->firstread    = $now;
+        $record->lastread     = $now;
+
+        $DB->insert_record('forum_read', $record, false);
     }
 
     // -------------------------------------------------------------------------
@@ -351,6 +402,7 @@ class log_writer {
      * @param  \stdClass|null $activity
      * @param  int|null       $objectid
      * @param  int            $simulated_time
+     * @param  int|null       $relateduserid
      * @return void
      */
     private function write_logstore_entry(
@@ -359,7 +411,8 @@ class log_writer {
         string $action_type,
         ?\stdClass $activity,
         ?int $objectid,
-        int $simulated_time
+        int $simulated_time,
+        ?int $relateduserid = null
     ): void {
         global $DB;
 
@@ -387,7 +440,7 @@ class log_writer {
         $record->contextinstanceid = $activity ? $activity->cmid : $courseid;
         $record->userid            = $userid;
         $record->courseid          = $courseid;
-        $record->relateduserid     = null;
+        $record->relateduserid     = $relateduserid;
         $record->anonymous         = 0;
         $record->other             = null;
         $record->timecreated       = $simulated_time;
