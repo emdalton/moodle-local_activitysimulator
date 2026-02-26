@@ -711,17 +711,25 @@ class term_manager {
     // -------------------------------------------------------------------------
 
     /**
-     * Returns the currently active term record, or null if none exists.
+     * Returns all currently active term records.
      *
-     * A term is active when its start_timestamp is in the past and its
+     * A term is active when its start_timestamp is in the past, its
      * end_timestamp is in the future, and its status is 'active'.
      *
-     * If multiple active terms exist (should not happen in normal operation),
-     * returns the one with the most recent start_timestamp.
+     * Multiple active terms is a normal operating condition — for example,
+     * a 16-week semester overlapping with one or more 8-week intensives.
+     * All active terms are returned so simulate_windows can process pending
+     * windows for each independently.
      *
-     * @return \stdClass|null
+     * Returns an empty array if no active terms exist.
+     *
+     * Results are ordered by start_timestamp ASC so older terms are
+     * processed first, which is the natural chronological order and
+     * makes backfill runs predictable.
+     *
+     * @return \stdClass[]  Array of term records, keyed by id.
      */
-    public function get_active_term(): ?\stdClass {
+    public function get_active_terms(): array {
         global $DB;
 
         $now = time();
@@ -730,9 +738,9 @@ class term_manager {
                  WHERE status = 'active'
                    AND start_timestamp <= :now
                    AND end_timestamp > :now2
-              ORDER BY start_timestamp DESC";
+              ORDER BY start_timestamp ASC";
 
-        return $DB->get_record_sql($sql, ['now' => $now, 'now2' => $now]) ?: null;
+        return $DB->get_records_sql($sql, ['now' => $now, 'now2' => $now]);
     }
 
     /**
