@@ -29,6 +29,7 @@ namespace local_activitysimulator\manager;
 defined('MOODLE_INTERNAL') || die();
 
 use local_activitysimulator\course_profiles\base_profile;
+use local_activitysimulator\data\name_generator;
 
 /**
  * Creates and manages simulated terms and their activity windows.
@@ -263,6 +264,387 @@ class term_manager {
         // regardless of whether they are backfill or live. This method exists
         // as a hook for future logic (e.g. setting a backfill priority flag).
         // Currently a no-op beyond the term.backfilled flag set by the caller.
+    }
+
+    // -------------------------------------------------------------------------
+    // Course creation and enrolment
+    // -------------------------------------------------------------------------
+
+    /**
+     * Creates all courses for a term inside its category.
+     *
+     * Each course is a fresh Moodle course (not a copy of a master) with
+     * sections and activities created according to the active course profile.
+     * Courses are named using name_generator so titles look like real academic
+     * courses. Section names are also generated.
+     *
+     * Idempotent: if courses already exist in the category (identified by
+     * idnumber prefix), no new ones are created.
+     *
+     * @param  int         $termid   Term record ID.
+     * @param  int         $categoryid Moodle course category ID.
+     * @param  base_profile $profile  Course profile instance.
+     * @param  bool        $verbose
+     * @return int[]       Array of created (or existing) Moodle course IDs.
+     */
+    public function create_courses_in_term(
+        int $termid,
+        int $categoryid,
+        base_profile $profile,
+        bool $verbose = false
+    ): array {
+        global $DB, $CFG;
+
+        require_once($CFG->dirroot . '/course/lib.php');
+
+        $count   = (int)($this->config->courses_per_term ?? 10);
+        $namegen = new name_generator();
+        $courseids = [];
+
+        for ($i = 1; $i <= $count; $i++) {
+            $idnumber = 'sim_term_' . $termid . '_course_' . $i;
+
+            // Idempotent: return existing course if already created.
+            $existing = $DB->get_record('course', ['idnumber' => $idnumber]);
+            if ($existing) {
+                $courseids[] = (int)$existing->id;
+                if ($verbose) {
+                    mtrace("  Course $i already exists (id={$existing->id}), reusing.");
+                }
+                continue;
+            }
+
+            // Build the course object.
+            $course = new \stdClass();
+            $course->fullname    = $namegen->get_course_name();
+            $course->shortname   = 'SIM-' . $termid . '-' . $i;
+            $course->idnumber    = $idnumber;
+            $course->category    = $categoryid;
+            $course->numsections = $profile->get_section_count();
+            $course->visible     = 1;
+            $course->startdate   = time();
+            $course->format      = 'topics';
+
+            $created = create_course($course);
+            $courseids[] = (int)$created->id;
+
+            // Populate sections and activities.
+            $this->create_course_content((int)$created->id, $profile, $namegen, $verbose);
+
+            if ($verbose) {
+                mtrace("  Created course $i: {$course->fullname} (id={$created->id})");
+            }
+        }
+
+        return $courseids;
+    }
+
+    /**
+     * Creates sections and activities within a course according to the profile.
+     *
+     * Each section gets a generated name and the set of activities defined by
+     * the profile for that section number. Activity names are also generated.
+     *
+     * @param  int          $courseid
+     * @param  base_profile $profile
+     * @param  name_generator $namegen  Shared instance so names vary across calls.
+     * @param  bool         $verbose
+     * @return void
+     */
+    private function create_course_content(
+        int $courseid,
+        base_profile $profile,
+        name_generator $namegen,
+        bool $verbose
+    ): void {
+        global $DB, $CFG;
+
+        require_once($CFG->dirroot . '/course/lib.php');
+        require_once($CFG->dirroot . '/mod/forum/lib.php');
+
+        $modinfo      = get_fast_modinfo($courseid);
+        $section_info = $modinfo->get_section_info_all();
+
+        for ($s = 1; $s <= $profile->get_section_count(); $s++) {
+            // Update section name.
+            if (isset($section_info[$s])) {
+                $DB->set_field('course_sections', 'name', $namegen->get_section_name(), [
+                    'course'  => $courseid,
+                    'section' => $s,
+                ]);
+            }
+
+            // Create each activity type in this section.
+            foreach ($profile->get_activities_for_section($s) as $type) {
+                $this->create_activity($courseid, $s, $type, $namegen);
+            }
+        }
+
+        // Rebuild modinfo cache after all module insertions.
+        rebuild_course_cache($courseid, true);
+    }
+
+    /**
+     * Creates a single activity module in a course section.
+     *
+     * Uses `add_moduleinfo()` which is the standard Moodle API for programmatic
+     * module creation. Only the four types used by the simulation engine are
+     * supported: page, quiz, assign, forum.
+     *
+     * @param  int          $courseid
+     * @param  int          $section   1-based section number.
+     * @param  string       $type      Activity type: 'page', 'quiz', 'assignment', 'forum'.
+     * @param  name_generator $namegen
+     * @return int          Course module ID of the created activity.
+     */
+    private function create_activity(
+        int $courseid,
+        int $section,
+        string $type,
+        name_generator $namegen
+    ): int {
+        global $CFG;
+
+        require_once($CFG->dirroot . '/course/modlib.php');
+
+        $course = get_course($courseid);
+
+        // Map plugin type strings to Moodle modnames.
+        $modname_map = [
+            'page'       => 'page',
+            'quiz'       => 'quiz',
+            'assignment' => 'assign',
+            'forum'      => 'forum',
+        ];
+
+        $modname = $modname_map[$type] ?? null;
+        if ($modname === null) {
+            return 0;
+        }
+
+        $moduleinfo = new \stdClass();
+        $moduleinfo->modulename = $modname;
+        $moduleinfo->course     = $courseid;
+        $moduleinfo->section    = $section;
+        $moduleinfo->visible    = 1;
+
+        switch ($modname) {
+            case 'page':
+                $moduleinfo->name    = $namegen->get_section_name() . ' Reading';
+                $moduleinfo->intro   = '';
+                $moduleinfo->introformat = FORMAT_HTML;
+                $moduleinfo->content = '<p>Simulated page content.</p>';
+                $moduleinfo->contentformat = FORMAT_HTML;
+                break;
+
+            case 'quiz':
+                $moduleinfo->name        = $namegen->get_section_name() . ' Quiz';
+                $moduleinfo->intro       = '';
+                $moduleinfo->introformat = FORMAT_HTML;
+                $moduleinfo->timeopen    = 0;
+                $moduleinfo->timeclose   = 0;
+                $moduleinfo->timelimit   = 0;
+                $moduleinfo->attempts    = 0; // Unlimited.
+                $moduleinfo->grademethod = 1; // Highest grade.
+                $moduleinfo->grade       = 100;
+                break;
+
+            case 'assign':
+                $moduleinfo->name        = $namegen->get_section_name() . ' Assignment';
+                $moduleinfo->intro       = '<p>Simulated assignment brief.</p>';
+                $moduleinfo->introformat = FORMAT_HTML;
+                $moduleinfo->duedate     = 0;
+                $moduleinfo->grade       = 100;
+                $moduleinfo->submissiondrafts = 0;
+                $moduleinfo->assignsubmission_onlinetext_enabled = 1;
+                $moduleinfo->assignsubmission_file_enabled = 0;
+                break;
+
+            case 'forum':
+                $moduleinfo->name        = $namegen->get_section_name() . ' Discussion';
+                $moduleinfo->intro       = '';
+                $moduleinfo->introformat = FORMAT_HTML;
+                $moduleinfo->type        = 'general';
+                break;
+        }
+
+        $moduleinfo->add         = $modname;
+        $moduleinfo->return      = 0;
+        $moduleinfo->sr          = 0;
+
+        $result = add_moduleinfo($moduleinfo, $course);
+        return (int)$result->coursemodule;
+    }
+
+    /**
+     * Enrols students and instructors into all courses in a term.
+     *
+     * Students are distributed across courses using a sliding window rotation.
+     * Each group's pool is offset by a fixed stride so consecutive students
+     * in the pool appear in consecutive courses. This guarantees deterministic,
+     * testable enrolment with every student appearing in at least
+     * $min_courses_per_student courses.
+     *
+     * The minimum-courses-per-student guarantee is enforced by a top-up pass:
+     * after the sliding window enrolment, any student appearing in fewer than
+     * $min_courses_per_student courses is enrolled in additional courses chosen
+     * sequentially from the term's course list.
+     *
+     * Instructors are distributed round-robin across courses.
+     *
+     * @param  int[]       $courseids   Moodle course IDs in the term.
+     * @param  int         $termid      For logging only.
+     * @param  bool        $verbose
+     * @return array       ['students_enrolled' => int, 'instructors_enrolled' => int]
+     */
+    public function enrol_users_in_term(
+        array $courseids,
+        int $termid,
+        bool $verbose = false
+    ): array {
+        global $CFG, $DB;
+
+        require_once($CFG->dirroot . '/lib/enrollib.php');
+
+        $stats = ['students_enrolled' => 0, 'instructors_enrolled' => 0];
+
+        if (empty($courseids)) {
+            return $stats;
+        }
+
+        $course_count         = count($courseids);
+        $students_per_course  = (int)($this->config->students_per_course ?? 30);
+        $groups               = ['overachiever', 'standard', 'intermittent', 'failing'];
+        $min_courses          = 2; // Minimum courses per student guarantee.
+
+        // Get the manual enrolment plugin — required for programmatic enrolment.
+        $enrol_plugin = enrol_get_plugin('manual');
+
+        // Ensure each course has a manual enrolment instance.
+        $enrol_instances = [];
+        foreach ($courseids as $courseid) {
+            $instance = $DB->get_record('enrol', [
+                'courseid' => $courseid,
+                'enrol'    => 'manual',
+            ]);
+            if (!$instance) {
+                $course  = get_course($courseid);
+                $instid  = $enrol_plugin->add_instance($course);
+                $instance = $DB->get_record('enrol', ['id' => $instid]);
+            }
+            $enrol_instances[$courseid] = $instance;
+        }
+
+        // Get student role ID.
+        $student_role = $DB->get_record('role', ['shortname' => 'student'], '*', MUST_EXIST);
+        $teacher_role = $DB->get_record('role', ['shortname' => 'editingteacher'], '*', MUST_EXIST);
+
+        // Track which courses each student is enrolled in (for top-up pass).
+        $student_course_map = []; // userid => [courseid, ...]
+
+        // -----------------------------------------------------------------
+        // Sliding window student enrolment, group by group.
+        // -----------------------------------------------------------------
+        foreach ($groups as $group) {
+            $pct     = (int)($this->config->{'group_pct_' . $group} ?? 10);
+            $n_slots = (int)round($students_per_course * $pct / 100);
+
+            if ($n_slots === 0) {
+                continue;
+            }
+
+            // Get all user IDs in this group from learner_profiles.
+            $userids = $DB->get_fieldset_select(
+                'local_activitysimulator_learner_profiles',
+                'userid',
+                'group_type = ?',
+                [$group]
+            );
+
+            if (empty($userids)) {
+                continue;
+            }
+
+            $pool_size = count($userids);
+
+            // Sliding window: for course $c (0-based), the window starts at
+            // offset = $c * $n_slots (mod pool_size) and takes $n_slots users.
+            for ($c = 0; $c < $course_count; $c++) {
+                $courseid  = $courseids[$c];
+                $instance  = $enrol_instances[$courseid];
+                $offset    = ($c * $n_slots) % $pool_size;
+
+                for ($slot = 0; $slot < $n_slots; $slot++) {
+                    $userid = $userids[($offset + $slot) % $pool_size];
+                    $enrol_plugin->enrol_user($instance, $userid, $student_role->id);
+                    $student_course_map[$userid][] = $courseid;
+                    $stats['students_enrolled']++;
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Top-up pass: guarantee each student appears in at least $min_courses.
+        // -----------------------------------------------------------------
+        foreach ($student_course_map as $userid => $enrolled_in) {
+            $shortfall = $min_courses - count($enrolled_in);
+            if ($shortfall <= 0) {
+                continue;
+            }
+
+            // Find courses this student is not yet in, sequentially from
+            // the start of the course list.
+            $enrolled_set = array_flip($enrolled_in);
+            $added        = 0;
+
+            foreach ($courseids as $courseid) {
+                if ($added >= $shortfall) {
+                    break;
+                }
+                if (isset($enrolled_set[$courseid])) {
+                    continue;
+                }
+                $instance = $enrol_instances[$courseid];
+                $enrol_plugin->enrol_user($instance, $userid, $student_role->id);
+                $stats['students_enrolled']++;
+                $added++;
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Instructor enrolment — round-robin across courses.
+        // -----------------------------------------------------------------
+        $instructor_ids = $DB->get_fieldset_sql(
+            "SELECT u.id FROM {user} u
+              WHERE u.username LIKE 't%'
+                AND u.deleted = 0
+              ORDER BY u.username ASC"
+        );
+
+        foreach ($courseids as $idx => $courseid) {
+            if (empty($instructor_ids)) {
+                break;
+            }
+            $instructors_per_course = (int)($this->config->instructors_per_course ?? 2);
+            $instance = $enrol_instances[$courseid];
+
+            for ($i = 0; $i < $instructors_per_course; $i++) {
+                $instructor = $instructor_ids[($idx * $instructors_per_course + $i) % count($instructor_ids)];
+                $enrol_plugin->enrol_user($instance, $instructor, $teacher_role->id);
+                $stats['instructors_enrolled']++;
+            }
+        }
+
+        if ($verbose) {
+            mtrace(sprintf(
+                '  Enrolment complete: %d student enrolments, %d instructor enrolments across %d courses.',
+                $stats['students_enrolled'],
+                $stats['instructors_enrolled'],
+                $course_count
+            ));
+        }
+
+        return $stats;
     }
 
     // -------------------------------------------------------------------------

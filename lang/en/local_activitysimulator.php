@@ -94,7 +94,7 @@ $string['backfill_max_weeks_desc'] = 'The furthest back (in weeks from today) th
 // -------------------------------------------------------------------------
 
 $string['students_per_course']      = 'Students per course';
-$string['students_per_course_desc'] = 'Number of students enrolled in each simulated course. The total student pool must be large enough to satisfy this across all courses in the term.';
+$string['students_per_course_desc'] = 'Number of students enrolled in each simulated course. Students are drawn from the pool using a sliding window rotation, so each student appears in approximately (students_per_course × courses_per_term) / pool_size courses before top-up. At the default of 30 students, 10 courses, and a pool of 500, each student appears in at least 2 courses after the minimum-2 top-up.';
 
 $string['instructors_per_course']      = 'Instructors per course';
 $string['instructors_per_course_desc'] = 'Number of instructors assigned to each course. Instructors are distributed across courses so each teaches approximately the same number.';
@@ -113,7 +113,7 @@ $string['group_count_overachiever'] = 'Overachievers: pool size';
 $string['group_count_standard']     = 'Standard: pool size';
 $string['group_count_intermittent'] = 'Intermittent: pool size';
 $string['group_count_failing']      = 'Failing: pool size';
-$string['group_count_desc']         = 'Total number of simulated users to create in this group. Determines the user pool size, independent of how many are enrolled per course.';
+$string['group_count_desc']         = 'Total number of simulated users to create in this group. Determines the user pool size. At defaults the pool is 500 students (50/350/50/50); increase proportionally if you need more variety across a larger number of courses or terms.';
 
 // -------------------------------------------------------------------------
 // Settings — diligence scalars.

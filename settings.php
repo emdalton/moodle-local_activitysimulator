@@ -150,7 +150,7 @@ if ($hassiteconfig) {
         'local_activitysimulator/students_per_course',
         get_string('students_per_course', 'local_activitysimulator'),
         get_string('students_per_course_desc', 'local_activitysimulator'),
-        100,
+        30,
         PARAM_INT
     ));
 
@@ -195,11 +195,17 @@ if ($hassiteconfig) {
     }
 
     // User pool counts — absolute number of users to create per group.
+    // Default pool of 500 students (50/350/50/50) with 30 students per course
+    // and 10 courses per term gives (30 × 10) / 500 = 0.6 raw appearances per
+    // student before top-up. The enrolment algorithm uses a sliding window that
+    // guarantees each student appears in at least 2 courses after top-up.
+    // Increasing students_per_course or course_count raises the raw appearance
+    // rate and reduces how much work the top-up logic does.
     $count_defaults = [
-        'overachiever' => 20,
-        'standard'     => 140,
-        'intermittent' => 20,
-        'failing'      => 20,
+        'overachiever' => 50,
+        'standard'     => 350,
+        'intermittent' => 50,
+        'failing'      => 50,
     ];
 
     foreach ($count_defaults as $group => $default) {
