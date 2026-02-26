@@ -132,9 +132,10 @@ class user_manager {
 
             // Create learner profile for students (not instructors).
             if ($def['group'] !== null) {
-                $this->ensure_learner_profile($userid, $def['group']);
-                // Count profiles created is tracked inside ensure_learner_profile;
-                // we reflect it here via a return value pattern below.
+                $created = $this->ensure_learner_profile($userid, $def['group']);
+                if ($created) {
+                    $stats['profiles_created']++;
+                }
             }
 
             // Add to cohort if not already a member.
@@ -285,11 +286,11 @@ class user_manager {
      * @param  string $group  One of the GROUP_* constants.
      * @return void
      */
-    private function ensure_learner_profile(int $userid, string $group): void {
+    private function ensure_learner_profile(int $userid, string $group): bool {
         global $DB;
 
         if ($DB->record_exists('local_activitysimulator_learner_profiles', ['userid' => $userid])) {
-            return;
+            return false;
         }
 
         $scalar = $this->generate_diligence_scalar($group);
@@ -303,6 +304,7 @@ class user_manager {
         $record->timemodified     = time();
 
         $DB->insert_record('local_activitysimulator_learner_profiles', $record);
+        return true;
     }
 
     /**
