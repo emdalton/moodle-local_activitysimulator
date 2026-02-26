@@ -216,6 +216,51 @@ class content_scanner {
         return $result;
     }
 
+    /**
+     * Returns all posts in a forum that the given user has not yet read,
+     * excluding their own posts.
+     *
+     * Queries forum_read at execution time, so actors who run later in a
+     * window naturally see posts written by actors who ran earlier. This
+     * drives the realistic within-window read accumulation pattern.
+     *
+     * Used for both section forums and the announcements forum. Passing the
+     * announcements forum's instanceid gives unread announcements.
+     *
+     * Each returned object has:
+     *   ->postid        int   forum_posts.id
+     *   ->authorid      int   forum_posts.userid (the post author)
+     *   ->discussionid  int   forum_discussions.id
+     *   ->forumid       int   forum.id
+     *
+     * Results are ordered by post creation time ascending, so earlier posts
+     * are read first — consistent with natural reading behaviour.
+     *
+     * @param  int      $forumid  forum.id (not cmid — the forum instance ID).
+     * @param  int      $userid   The user whose read state to check.
+     * @return \stdClass[]        Array of unread post descriptor objects.
+     */
+    public function get_unread_posts(int $forumid, int $userid): array {
+        global $DB;
+
+        $sql = "SELECT fp.id AS postid, fp.userid AS authorid,
+                       fd.id AS discussionid, f.id AS forumid
+                  FROM {forum_posts} fp
+                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
+                  JOIN {forum} f ON f.id = fd.forum
+             LEFT JOIN {forum_read} fr ON fr.postid = fp.id AND fr.userid = :userid
+                 WHERE f.id = :forumid
+                   AND fp.userid != :userid2
+                   AND fr.id IS NULL
+              ORDER BY fp.created ASC";
+
+        return array_values($DB->get_records_sql($sql, [
+            'userid'  => $userid,
+            'forumid' => $forumid,
+            'userid2' => $userid,
+        ]));
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------

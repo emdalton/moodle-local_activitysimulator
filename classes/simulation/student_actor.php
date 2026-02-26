@@ -123,22 +123,19 @@ class student_actor {
     /**
      * Simulates one student's actions in one window.
      *
-     * @param  int                $userid        Moodle user ID.
-     * @param  int                $courseid      Moodle course ID.
-     * @param  int                $section       1-based section number for this window.
-     * @param  int                $window_index  0-based window position within term.
-     * @param  base_learner_profile $profile     The student's learner profile instance.
-     * @param  bool               $announcement_posted  True if instructor posted an
-     *                                           announcement this window.
-     * @return int                Number of log entries written (0 = student skipped window).
+     * @param  int                  $userid        Moodle user ID.
+     * @param  int                  $courseid      Moodle course ID.
+     * @param  int                  $section       1-based section number for this window.
+     * @param  int                  $window_index  0-based window position within term.
+     * @param  base_learner_profile $profile       The student's learner profile instance.
+     * @return int                  Number of log entries written (0 = student skipped window).
      */
     public function simulate(
         int $userid,
         int $courseid,
         int $section,
         int $window_index,
-        base_learner_profile $profile,
-        bool $announcement_posted = false
+        base_learner_profile $profile
     ): int {
         $written = 0;
 
@@ -159,18 +156,21 @@ class student_actor {
             $written += $this->simulate_activity($userid, $courseid, $activity, $window_index, $profile);
         }
 
-        // 3. View grades — passive, weighted toward later windows.
+        // 3. Read unread announcements posted by instructors.
+        // Announcements are posted at the end of the prior window — students
+        // encounter them as unread posts at the start of the current window.
+        //
+        // TODO: When supporting locally designed courses, check whether the
+        // Announcements forum allows student replies (forum->type and course
+        // settings). Default behaviour is read-only (no student replies).
+        // The $allow_announcement_replies flag below controls this.
+        $allow_announcement_replies = false; // Default: read-only for students.
+        $written += $this->simulate_announcements($userid, $courseid, $window_index, $profile, $allow_announcement_replies);
+
+        // 4. View grades — passive, weighted toward later windows.
         if ($this->should_view_grades($window_index, $profile)) {
             $this->log_writer->write_action($userid, $courseid, 'view_grades');
             $written++;
-        }
-
-        // 4. Read announcements — only if instructor posted one this window.
-        if ($announcement_posted) {
-            if ($profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
-                $this->log_writer->write_action($userid, $courseid, 'read_announcement');
-                $written++;
-            }
         }
 
         return $written;
@@ -300,11 +300,106 @@ class student_actor {
     }
 
     /**
+     * Reads unread announcements and optionally replies.
+     *
+     * Announcements are posted by instructors at the end of the prior window.
+     * Students encounter them as unread posts via the forum_read table.
+     *
+     * @param  int                  $userid
+     * @param  int                  $courseid
+     * @param  int                  $window_index
+     * @param  base_learner_profile $profile
+     * @param  bool                 $allow_replies  Whether students may reply.
+     * @return int                  Log entries written.
+     */
+    private function simulate_announcements(
+        int $userid,
+        int $courseid,
+        int $window_index,
+        base_learner_profile $profile,
+        bool $allow_replies
+    ): int {
+        $written = 0;
+
+        $announcements_cm = $this->scanner->get_announcements_forum();
+        if ($announcements_cm === null) {
+            return 0;
+        }
+
+        $activity = $this->cm_to_descriptor($announcements_cm, 0);
+        $unread   = $this->scanner->get_unread_posts($announcements_cm->instance, $userid);
+
+        foreach ($unread as $post) {
+            // Passive roll: read this announcement.
+            if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
+                continue;
+            }
+
+            $this->log_writer->write_forum_read(
+                $userid,
+                (int)$post->postid,
+                (int)$post->discussionid,
+                (int)$post->forumid
+            );
+
+            $this->log_writer->write_action(
+                $userid,
+                $courseid,
+                'read_announcement',
+                $activity,
+                (int)$post->postid,
+                null,
+                (int)$post->authorid
+            );
+            $written++;
+
+            // Active roll: reply to announcement (if permitted).
+            if ($allow_replies &&
+                $profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
+                $this->log_writer->write_action(
+                    $userid,
+                    $courseid,
+                    'reply_forum',
+                    $activity,
+                    (int)$post->postid,
+                    $this->namegen->get_post_text(),
+                    (int)$post->authorid
+                );
+                $written++;
+            }
+        }
+
+        return $written;
+    }
+
+    /**
+     * Converts a cm_info object to a minimal activity descriptor stdClass
+     * compatible with log_writer::write_action().
+     *
+     * Used for the announcements forum, which is returned as a cm_info by
+     * content_scanner::get_announcements_forum().
+     *
+     * @param  \cm_info $cm
+     * @param  int      $section 1-based section number (0 for course header).
+     * @return \stdClass
+     */
+    private function cm_to_descriptor(\cm_info $cm, int $section): \stdClass {
+        $d             = new \stdClass();
+        $d->type       = 'forum';
+        $d->cmid       = (int)$cm->id;
+        $d->instanceid = (int)$cm->instance;
+        $d->name       = $cm->name;
+        $d->section    = $section;
+        $d->duedate    = null;
+        return $d;
+    }
+
+    /**
      * Forum: read unread posts (passive), reply to some (active), post new (active).
      *
-     * Queries forum_read and forum_posts at execution time to find posts this
-     * user has not yet read. Students who execute later in the window naturally
-     * see more unread posts from peers who executed earlier.
+     * Queries forum_read via content_scanner at execution time to find posts
+     * this user has not yet read. Students who execute later in the window
+     * naturally see more unread posts from peers who executed earlier.
      *
      * For each unread post:
      *   passive roll → write_forum_read() + read_forum logstore entry (relateduserid = post author)
@@ -322,35 +417,16 @@ class student_actor {
         int $window_index,
         base_learner_profile $profile
     ): int {
-        global $DB;
-
         $written = 0;
 
         // --- Read unread posts ---
-        $sql = "SELECT fp.id AS postid, fp.userid AS authorid,
-                       fd.id AS discussionid, f.id AS forumid
-                  FROM {forum_posts} fp
-                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
-                  JOIN {forum} f ON f.id = fd.forum
-             LEFT JOIN {forum_read} fr ON fr.postid = fp.id AND fr.userid = :userid
-                 WHERE f.id = :forumid
-                   AND fp.userid != :userid2
-                   AND fr.id IS NULL
-              ORDER BY fp.created ASC";
-
-        $unread = $DB->get_records_sql($sql, [
-            'userid'  => $userid,
-            'forumid' => $activity->instanceid,
-            'userid2' => $userid,
-        ]);
+        $unread = $this->scanner->get_unread_posts($activity->instanceid, $userid);
 
         foreach ($unread as $post) {
-            // Passive roll: read this post.
             if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
                 continue;
             }
 
-            // Mark read in Moodle's forum_read table.
             $this->log_writer->write_forum_read(
                 $userid,
                 (int)$post->postid,
@@ -358,7 +434,6 @@ class student_actor {
                 (int)$post->forumid
             );
 
-            // Logstore entry with relateduserid for SNA.
             $this->log_writer->write_action(
                 $userid,
                 $courseid,
@@ -370,7 +445,6 @@ class student_actor {
             );
             $written++;
 
-            // Active roll: reply to this post.
             if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
                 $this->log_writer->write_action(
                     $userid,

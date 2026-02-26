@@ -232,34 +232,15 @@ class instructor_actor {
         \stdClass $activity,
         array $probs
     ): int {
-        global $DB;
-
         $written = 0;
 
-        $sql = "SELECT fp.id AS postid, fp.userid AS authorid,
-                       fd.id AS discussionid, f.id AS forumid
-                  FROM {forum_posts} fp
-                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
-                  JOIN {forum} f ON f.id = fd.forum
-             LEFT JOIN {forum_read} fr ON fr.postid = fp.id AND fr.userid = :userid
-                 WHERE f.id = :forumid
-                   AND fp.userid != :userid2
-                   AND fr.id IS NULL
-              ORDER BY fp.created ASC";
-
-        $unread = $DB->get_records_sql($sql, [
-            'userid'  => $userid,
-            'forumid' => $activity->instanceid,
-            'userid2' => $userid,
-        ]);
+        $unread = $this->scanner->get_unread_posts($activity->instanceid, $userid);
 
         foreach ($unread as $post) {
-            // Profile probability roll: read this post.
             if (!$this->roll($probs['read_post'])) {
                 continue;
             }
 
-            // Mark read in Moodle's forum_read table.
             $this->log_writer->write_forum_read(
                 $userid,
                 (int)$post->postid,
@@ -267,7 +248,6 @@ class instructor_actor {
                 (int)$post->forumid
             );
 
-            // Logstore entry with relateduserid for SNA.
             $this->log_writer->write_action(
                 $userid,
                 $courseid,
@@ -279,7 +259,6 @@ class instructor_actor {
             );
             $written++;
 
-            // Reply probability roll.
             if ($this->roll($probs['reply_post'])) {
                 $this->log_writer->write_action(
                     $userid,
