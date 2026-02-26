@@ -116,6 +116,9 @@ class instructor_actor {
     /** @var int Total windows in term. */
     private int $total_windows;
 
+    /** @var bool Emit per-instructor mtrace() lines when true. */
+    private bool $verbose;
+
     /**
      * Constructor.
      *
@@ -123,17 +126,20 @@ class instructor_actor {
      * @param content_scanner $scanner
      * @param name_generator  $namegen
      * @param int             $total_windows
+     * @param bool            $verbose       Emit per-instructor progress lines.
      */
     public function __construct(
         log_writer $log_writer,
         content_scanner $scanner,
         name_generator $namegen,
-        int $total_windows
+        int $total_windows,
+        bool $verbose = false
     ) {
         $this->log_writer    = $log_writer;
         $this->scanner       = $scanner;
         $this->namegen       = $namegen;
         $this->total_windows = $total_windows;
+        $this->verbose       = $verbose;
     }
 
     /**
@@ -210,6 +216,19 @@ class instructor_actor {
         $result = new \stdClass();
         $result->written              = $written;
         $result->announcement_posted  = $announcement_posted;
+
+        if ($this->verbose) {
+            global $DB;
+            $username = $DB->get_field('user', 'username', ['id' => $userid]) ?? "user$userid";
+            mtrace(sprintf('      instructor %s [%s] window %d: %d entries%s',
+                $username,
+                $profile_type,
+                $window_index,
+                $written,
+                $announcement_posted ? ', announcement posted' : ''
+            ));
+        }
+
         return $result;
     }
 

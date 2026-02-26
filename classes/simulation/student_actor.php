@@ -100,6 +100,9 @@ class student_actor {
     /** @var int Total windows in term, for decay and grade-view weighting. */
     private int $total_windows;
 
+    /** @var bool Emit per-student mtrace() lines when true. */
+    private bool $verbose;
+
     /**
      * Constructor.
      *
@@ -107,17 +110,20 @@ class student_actor {
      * @param content_scanner $scanner
      * @param name_generator  $namegen
      * @param int             $total_windows Total windows in the term.
+     * @param bool            $verbose       Emit per-student progress lines.
      */
     public function __construct(
         log_writer $log_writer,
         content_scanner $scanner,
         name_generator $namegen,
-        int $total_windows
+        int $total_windows,
+        bool $verbose = false
     ) {
         $this->log_writer    = $log_writer;
         $this->scanner       = $scanner;
         $this->namegen       = $namegen;
         $this->total_windows = $total_windows;
+        $this->verbose       = $verbose;
     }
 
     /**
@@ -142,6 +148,11 @@ class student_actor {
         // Initial engagement roll — if the student doesn't engage at all,
         // exit immediately with no log entries.
         if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
+            if ($this->verbose) {
+                $username = $this->get_username($userid);
+                mtrace(sprintf('      student %s [%s] window %d: skipped (engagement roll failed)',
+                    $username, $profile->get_group_type(), $window_index));
+            }
             return 0;
         }
 
@@ -171,6 +182,12 @@ class student_actor {
         if ($this->should_view_grades($window_index, $profile)) {
             $this->log_writer->write_action($userid, $courseid, 'view_grades');
             $written++;
+        }
+
+        if ($this->verbose) {
+            $username = $this->get_username($userid);
+            mtrace(sprintf('      student %s [%s] window %d: engaged, %d entries',
+                $username, $profile->get_group_type(), $window_index, $written));
         }
 
         return $written;
@@ -473,6 +490,28 @@ class student_actor {
         }
 
         return $written;
+    }
+
+    // -------------------------------------------------------------------------
+    // Private: verbose helpers
+    // -------------------------------------------------------------------------
+
+    /** @var array<int,string> Username cache for verbose output. */
+    private array $username_cache = [];
+
+    /**
+     * Returns the username for a userid, caching the result.
+     * Used only in verbose mode to avoid repeated DB queries.
+     *
+     * @param  int    $userid
+     * @return string
+     */
+    private function get_username(int $userid): string {
+        if (!isset($this->username_cache[$userid])) {
+            global $DB;
+            $this->username_cache[$userid] = $DB->get_field('user', 'username', ['id' => $userid]) ?? "user$userid";
+        }
+        return $this->username_cache[$userid];
     }
 
     // -------------------------------------------------------------------------

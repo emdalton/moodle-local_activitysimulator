@@ -237,8 +237,8 @@ class window_runner {
             return 0;
         }
 
-        $student_actor    = new student_actor($log_writer, $scanner, $this->namegen, $total_windows);
-        $instructor_actor = new instructor_actor($log_writer, $scanner, $this->namegen, $total_windows);
+        $student_actor    = new student_actor($log_writer, $scanner, $this->namegen, $total_windows, $this->verbose);
+        $instructor_actor = new instructor_actor($log_writer, $scanner, $this->namegen, $total_windows, $this->verbose);
 
         // --- Pass 1: Students ---
         foreach ($students as $student) {
