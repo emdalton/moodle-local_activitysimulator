@@ -270,10 +270,6 @@ $string['gen_given_names'] =
     'Olivia|Omar|Priya|Rafael|Rania|Rebecca|Riku|Rosa|Samuel|Sara|' .
     'Sebastian|Selma|Shreya|Sofia|Stefan|Sun-hee|Tariq|Tomas|Valentina|Yuki';
 
-// -------------------------------------------------------------------------
-// Family names (surnames) — used by name_generator::get_lastname().
-// -------------------------------------------------------------------------
-
 $string['gen_family_names'] =
     'Abramowitz|Adeyemi|Agarwal|Andersen|Antonescu|Araujo|Asante|Baek|Bakr|Banerjee|' .
     'Bergstrom|Boateng|Bouchard|Castillo|Cheung|Christodoulou|Czajkowski|Dalton|Diallo|Diaz|' .

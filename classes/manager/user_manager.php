@@ -255,8 +255,9 @@ class user_manager {
         $userobj = new \stdClass();
         $userobj->username  = $def['username'];
         $userobj->password  = hash_internal_user_password(self::SIMULATOR_USER_PASSWORD);
-        $userobj->firstname = $this->namegen->get_firstname();
-        $userobj->lastname  = $this->namegen->get_lastname();
+        $name = $this->namegen->get_name_for_username($def['username']);
+        $userobj->firstname = $name['firstname'];
+        $userobj->lastname  = $name['lastname'];
         $userobj->email     = $def['username'] . '@' . self::EMAIL_DOMAIN;
         $userobj->auth      = 'manual';
         $userobj->confirmed = 1;

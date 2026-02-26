@@ -62,10 +62,10 @@ defined('MOODLE_INTERNAL') || die();
  */
 class name_generator {
 
-    /** @var array Loaded given names. */
+    /** @var array Loaded given names (first names). */
     private array $given_names = [];
 
-    /** @var array Loaded family names. */
+    /** @var array Loaded family names (surnames). */
     private array $family_names = [];
 
     /** @var array Loaded course qualifiers. */
@@ -88,12 +88,6 @@ class name_generator {
 
     /** @var array Loaded post verses. */
     private array $post_verses = [];
-
-    /** @var int Counter for given names. */
-    private int $given_index = 0;
-
-    /** @var int Counter for family names. */
-    private int $family_index = 0;
 
     /** @var int Counter for course names. */
     private int $course_index = 0;
@@ -118,39 +112,62 @@ class name_generator {
         $this->section_nouns      = $this->load_list('gen_section_nouns');
         $this->post_verses        = $this->load_list('gen_post_verses');
 
-        // Shuffle each list independently so names and titles are not
-        // generated in the same alphabetical order every run.
-        shuffle($this->given_names);
-        shuffle($this->family_names);
+        // Shuffle course/section lists so titles vary across runs.
+        // Name lists are NOT shuffled — order is fixed so username derivation
+        // always produces the same name for the same username.
         shuffle($this->course_qualifiers);
         shuffle($this->course_subjects);
         shuffle($this->course_disciplines);
         shuffle($this->section_adjectives);
         shuffle($this->section_nouns);
-        // Post verses are not shuffled — cycling in order is fine and makes
-        // the content slightly more predictable for debugging.
     }
 
     /**
-     * Returns the next synthetic given name (first name).
+     * Derives a deterministic human-readable name from a simulated username.
      *
-     * @return string
+     * Username format: [letter][hundreds][tens][ones]
+     * Examples: a047, b187, c023, f012, t001
+     *
+     * First name — derived from middle two digits (hundreds + tens):
+     *   index = (hundreds_digit * 10 + tens_digit) % count(given_names)
+     *   e.g. b187 → hundreds=1, tens=8 → 18 % 110 = 18 → given_names[18]
+     *
+     * Surname — derived from prefix letter + ones digit:
+     *   letter_index: a=0, b=1, c=2, f=3, t=4
+     *   index = (letter_index * 10 + ones_digit) % count(family_names)
+     *   e.g. b187 → letter_index=1, ones=7 → 17 % 100 = 17 → family_names[17]
+     *
+     * With 110 given names and 100 family names the lists support pools well
+     * beyond the current default of 502 users. The same username always maps
+     * to the same name, making output deterministic and reproducible.
+     *
+     * Falls back to the username itself if parsing fails.
+     *
+     * @param  string $username  e.g. 'b187', 't001'
+     * @return array  ['firstname' => string, 'lastname' => string]
      */
-    public function get_firstname(): string {
-        $name = $this->given_names[$this->given_index % count($this->given_names)];
-        $this->given_index++;
-        return $name;
-    }
+    public function get_name_for_username(string $username): array {
+        $letter_map = ['a' => 0, 'b' => 1, 'c' => 2, 'f' => 3, 't' => 4];
 
-    /**
-     * Returns the next synthetic family name (last name).
-     *
-     * @return string
-     */
-    public function get_lastname(): string {
-        $name = $this->family_names[$this->family_index % count($this->family_names)];
-        $this->family_index++;
-        return $name;
+        if (!preg_match('/^([abcft])(\d)(\d)(\d)$/', $username, $m)) {
+            // Unrecognised format — use username as fallback.
+            return ['firstname' => $username, 'lastname' => 'User'];
+        }
+
+        $letter   = $m[1];
+        $hundreds = (int)$m[2];
+        $tens     = (int)$m[3];
+        $ones     = (int)$m[4];
+
+        $letter_index = $letter_map[$letter] ?? 0;
+
+        $firstname_index = ($hundreds * 10 + $tens) % count($this->given_names);
+        $surname_index   = ($letter_index * 10 + $ones) % count($this->family_names);
+
+        return [
+            'firstname' => $this->given_names[$firstname_index],
+            'lastname'  => $this->family_names[$surname_index],
+        ];
     }
 
     /**
@@ -214,8 +231,6 @@ class name_generator {
      * @return void
      */
     public function reset_counters(): void {
-        $this->given_index   = 0;
-        $this->family_index  = 0;
         $this->course_index  = 0;
         $this->section_index = 0;
         $this->verse_index   = 0;

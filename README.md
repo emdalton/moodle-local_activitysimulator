@@ -159,9 +159,59 @@ All settings are under **Site administration → Plugins → Local plugins → A
 
 ---
 
+## CLI tools
+
+Both tools must be run from the Moodle server as a user with access to `config.php`. They use Moodle's standard CLI bootstrap and emit output via `mtrace()`.
+
+### `cli/setup.php` — create a term
+
+```bash
+# Create the next scheduled term (next Monday by default):
+php local/activitysimulator/cli/setup.php
+
+# Create a term starting on a specific date (backfill):
+php local/activitysimulator/cli/setup.php --date=2026-01-06
+
+# Dry run — validate settings and report what would be created:
+php local/activitysimulator/cli/setup.php --date=2026-01-06 --dry-run
+
+# Bootstrap the user pool without creating a term:
+php local/activitysimulator/cli/setup.php --users-only --verbose
+```
+
+Options: `--date=YYYY-MM-DD`, `--users-only`, `--dry-run` / `-n`, `--verbose` / `-v`, `--help` / `-h`
+
+### `cli/run_window.php` — run simulation windows
+
+```bash
+# Run all pending windows (same as the scheduled task):
+php local/activitysimulator/cli/run_window.php
+
+# List active terms and window status:
+php local/activitysimulator/cli/run_window.php --list
+
+# List windows for a specific term:
+php local/activitysimulator/cli/run_window.php --list --term=3
+
+# Run pending windows for one term only:
+php local/activitysimulator/cli/run_window.php --term=3
+
+# Re-run one specific window with full verbose output (primary debug tool):
+php local/activitysimulator/cli/run_window.php --window=42 --force --verbose
+
+# Step through a backfill 5 windows at a time:
+php local/activitysimulator/cli/run_window.php --term=3 --limit=5
+```
+
+Options: `--term=ID`, `--window=ID`, `--limit=N`, `--force`, `--list` / `-l`, `--verbose` / `-v`, `--help` / `-h`
+
+`--window` implies `--force` — naming a window explicitly always re-runs it regardless of status. `--force` without `--window` requires `testmode` to be enabled in plugin settings to prevent accidental mass re-simulation.
+
+---
+
 ## Build status
 
-| Step | Status |
+| Component | Status |
 |---|---|
 | `version.php` + `settings.php` | ✓ Complete |
 | `db/install.xml` | ✓ Complete |
@@ -169,14 +219,16 @@ All settings are under **Site administration → Plugins → Local plugins → A
 | `user_manager` | ✓ Complete |
 | Course profiles (`base_profile`, `one_week_intensive`) | ✓ Complete |
 | `term_manager` | ✓ Complete |
-| `classes/task/setup_term.php` | ⏳ Stub — next |
+| `classes/task/setup_term.php` | ✓ Complete |
 | `content_scanner` | ✓ Complete |
 | Learner profiles (all four) | ✓ Complete |
 | `student_actor` + `instructor_actor` | ✓ Complete |
 | `log_writer` | ✓ Complete |
 | `window_runner` | ✓ Complete |
-| `classes/task/simulate_windows.php` | ⏳ Stub — next |
-| `cli/setup.php` + `cli/run_window.php` | ⏳ Not started |
+| `classes/task/simulate_windows.php` | ✓ Complete |
+| `cli/setup.php` + `cli/run_window.php` | ✓ Complete |
+
+**All planned components are implemented.** Remaining work: `eight_week_accelerated` and `sixteen_week_semester` course profiles (referenced in settings, classes not yet written), and integration testing on a live Moodle instance.
 
 ---
 
