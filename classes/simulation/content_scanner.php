@@ -136,8 +136,9 @@ class content_scanner {
         $cms          = $modinfo->get_cms();
         $activities   = [];
 
-        foreach ($section_info->sequence as $cmid) {
-            if (!isset($cms[$cmid])) {
+        foreach (explode(',', $section_info->sequence ?: '') as $cmid) {
+            $cmid = (int)$cmid;
+            if ($cmid === 0 || !isset($cms[$cmid])) {
                 continue;
             }
 

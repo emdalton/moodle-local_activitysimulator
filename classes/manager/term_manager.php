@@ -403,7 +403,7 @@ class term_manager {
         string $type,
         name_generator $namegen
     ): int {
-        global $CFG;
+        global $CFG, $DB;
 
         require_once($CFG->dirroot . '/course/modlib.php');
 
@@ -424,47 +424,114 @@ class term_manager {
 
         $moduleinfo = new \stdClass();
         $moduleinfo->modulename = $modname;
+        $moduleinfo->module     = $DB->get_field('modules', 'id', ['name' => $modname, 'visible' => 1]);
         $moduleinfo->course     = $courseid;
         $moduleinfo->section    = $section;
         $moduleinfo->visible    = 1;
+        $moduleinfo->cmidnumber = '';
 
         switch ($modname) {
             case 'page':
-                $moduleinfo->name    = $namegen->get_section_name() . ' Reading';
-                $moduleinfo->intro   = '';
-                $moduleinfo->introformat = FORMAT_HTML;
-                $moduleinfo->content = '<p>Simulated page content.</p>';
-                $moduleinfo->contentformat = FORMAT_HTML;
+                $moduleinfo->name              = $namegen->get_section_name() . ' Reading';
+                $moduleinfo->intro             = '';
+                $moduleinfo->introformat       = FORMAT_HTML;
+                $moduleinfo->content           = '<p>Simulated page content.</p>';
+                $moduleinfo->contentformat     = FORMAT_HTML;
+                $moduleinfo->display           = 0; // Embed in page.
+                $moduleinfo->printintro        = 0;
+                $moduleinfo->printlastmodified = 1;
                 break;
 
             case 'quiz':
-                $moduleinfo->name        = $namegen->get_section_name() . ' Quiz';
-                $moduleinfo->intro       = '';
-                $moduleinfo->introformat = FORMAT_HTML;
-                $moduleinfo->timeopen    = 0;
-                $moduleinfo->timeclose   = 0;
-                $moduleinfo->timelimit   = 0;
-                $moduleinfo->attempts    = 0; // Unlimited.
-                $moduleinfo->grademethod = 1; // Highest grade.
-                $moduleinfo->grade       = 100;
+                $moduleinfo->name             = $namegen->get_section_name() . ' Quiz';
+                $moduleinfo->intro            = '';
+                $moduleinfo->introformat      = FORMAT_HTML;
+                $moduleinfo->timeopen         = 0;
+                $moduleinfo->timeclose        = 0;
+                $moduleinfo->timelimit        = 0;
+                $moduleinfo->attempts         = 0; // Unlimited.
+                $moduleinfo->grademethod      = 1; // Highest grade.
+                $moduleinfo->grade            = 100;
+                $moduleinfo->quizpassword     = '';
+                $moduleinfo->subnet           = '';
+                $moduleinfo->delay1           = 0;
+                $moduleinfo->delay2           = 0;
+                $moduleinfo->overduehandling  = 'autosubmit';
+                $moduleinfo->graceperiod      = 0;
+                $moduleinfo->preferredbehaviour = 'deferredfeedback';
+                $moduleinfo->canredoquestions = 0;
+                $moduleinfo->reviewattempt    = 0;
+                $moduleinfo->reviewcorrectness = 0;
+                $moduleinfo->reviewmarks      = 0;
+                $moduleinfo->reviewspecificfeedback = 0;
+                $moduleinfo->reviewgeneralfeedback  = 0;
+                $moduleinfo->reviewrightanswer      = 0;
+                $moduleinfo->reviewoverallfeedback  = 0;
+                $moduleinfo->questionsperpage = 0;
+                $moduleinfo->navmethod        = 'free';
+                $moduleinfo->shuffleanswers   = 1;
+                $moduleinfo->sumgrades        = 0;
+                $moduleinfo->decimalpoints    = 2;
+                $moduleinfo->questiondecimalpoints = -1;
+                $moduleinfo->browsersecurity  = '-';
                 break;
 
             case 'assign':
-                $moduleinfo->name        = $namegen->get_section_name() . ' Assignment';
-                $moduleinfo->intro       = '<p>Simulated assignment brief.</p>';
-                $moduleinfo->introformat = FORMAT_HTML;
-                $moduleinfo->duedate     = 0;
-                $moduleinfo->grade       = 100;
+                $moduleinfo->name             = $namegen->get_section_name() . ' Assignment';
+                $moduleinfo->intro            = '<p>Simulated assignment brief.</p>';
+                $moduleinfo->introformat      = FORMAT_HTML;
+                $moduleinfo->duedate          = 0;
+                $moduleinfo->allowsubmissionsfromdate = 0;
+                $moduleinfo->cutoffdate       = 0;
+                $moduleinfo->gradingduedate   = 0;
+                $moduleinfo->grade            = 100;
                 $moduleinfo->submissiondrafts = 0;
+                $moduleinfo->requiresubmissionstatement = 0;
+                $moduleinfo->sendnotifications        = 0;
+                $moduleinfo->sendlatenotifications    = 0;
+                $moduleinfo->sendstudentnotifications = 1;
+                $moduleinfo->maxattempts      = -1;
+                $moduleinfo->attemptreopenmethod = 'none';
+                $moduleinfo->teamsubmission   = 0;
+                $moduleinfo->requireallteammemberssubmit = 0;
+                $moduleinfo->teamsubmissiongroupingid = 0;
+                $moduleinfo->blindmarking     = 0;
+                $moduleinfo->hidegrader       = 0;
+                $moduleinfo->markingworkflow  = 0;
+                $moduleinfo->markingallocation = 0;
                 $moduleinfo->assignsubmission_onlinetext_enabled = 1;
+                $moduleinfo->assignsubmission_onlinetext_wordlimit = 0;
+                $moduleinfo->assignsubmission_onlinetext_wordlimitenabled = 0;
                 $moduleinfo->assignsubmission_file_enabled = 0;
+                $moduleinfo->assignsubmission_file_maxfiles = 1;
+                $moduleinfo->assignsubmission_file_maxsizebytes = 0;
+                $moduleinfo->assignfeedback_comments_enabled = 1;
+                $moduleinfo->assignfeedback_comments_commentinline = 0;
+                $moduleinfo->assignfeedback_file_enabled = 0;
                 break;
 
             case 'forum':
-                $moduleinfo->name        = $namegen->get_section_name() . ' Discussion';
-                $moduleinfo->intro       = '';
-                $moduleinfo->introformat = FORMAT_HTML;
-                $moduleinfo->type        = 'general';
+                $moduleinfo->name             = $namegen->get_section_name() . ' Discussion';
+                $moduleinfo->intro            = '';
+                $moduleinfo->introformat      = FORMAT_HTML;
+                $moduleinfo->type             = 'general';
+                $moduleinfo->maxbytes         = 0;
+                $moduleinfo->maxattachments   = 9;
+                $moduleinfo->forcesubscribe   = 0;
+                $moduleinfo->trackingtype     = 1;
+                $moduleinfo->grade_forum      = 0;
+                $moduleinfo->assessed         = 0;
+                $moduleinfo->assesstimestart  = 0;
+                $moduleinfo->assesstimefinish = 0;
+                $moduleinfo->scale            = 0;
+                $moduleinfo->rsstype          = 0;
+                $moduleinfo->rssarticles      = 0;
+                $moduleinfo->warnafter        = 0;
+                $moduleinfo->blockafter       = 0;
+                $moduleinfo->blockperiod      = 0;
+                $moduleinfo->completiondiscussions = 0;
+                $moduleinfo->completionreplies     = 0;
+                $moduleinfo->completionposts        = 0;
                 break;
         }
 
@@ -520,7 +587,9 @@ class term_manager {
         // Get the manual enrolment plugin — required for programmatic enrolment.
         $enrol_plugin = enrol_get_plugin('manual');
 
-        // Ensure each course has a manual enrolment instance.
+        // Ensure each course has a manual enrolment instance with welcome
+        // messages disabled. Simulated users have invalid email addresses
+        // so Moodle must not attempt to send them any messages.
         $enrol_instances = [];
         foreach ($courseids as $courseid) {
             $instance = $DB->get_record('enrol', [
@@ -528,9 +597,14 @@ class term_manager {
                 'enrol'    => 'manual',
             ]);
             if (!$instance) {
-                $course  = get_course($courseid);
-                $instid  = $enrol_plugin->add_instance($course);
+                $course = get_course($courseid);
+                $instid = $enrol_plugin->add_instance($course);
                 $instance = $DB->get_record('enrol', ['id' => $instid]);
+            }
+            // customint1 = 0 disables the welcome message for manual enrolment.
+            if ($instance->customint1 != 0) {
+                $DB->set_field('enrol', 'customint1', 0, ['id' => $instance->id]);
+                $instance->customint1 = 0;
             }
             $enrol_instances[$courseid] = $instance;
         }
@@ -616,7 +690,7 @@ class term_manager {
         // -----------------------------------------------------------------
         $instructor_ids = $DB->get_fieldset_sql(
             "SELECT u.id FROM {user} u
-              WHERE u.username LIKE 't%'
+              WHERE u.username REGEXP '^t[0-9]{3}$'
                 AND u.deleted = 0
               ORDER BY u.username ASC"
         );

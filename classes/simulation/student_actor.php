@@ -379,7 +379,7 @@ class student_actor {
                     'reply_forum',
                     $activity,
                     (int)$post->postid,
-                    $this->namegen->get_post_text(),
+                    "posted",
                     (int)$post->authorid
                 );
                 $written++;
@@ -469,7 +469,7 @@ class student_actor {
                     'reply_forum',
                     $activity,
                     (int)$post->postid,
-                    $this->namegen->get_post_text(),
+                    "posted",
                     (int)$post->authorid
                 );
                 $written++;
@@ -484,7 +484,7 @@ class student_actor {
                 'post_forum',
                 $activity,
                 null,
-                $this->namegen->get_post_text()
+                'posted'
             );
             $written++;
         }

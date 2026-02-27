@@ -175,7 +175,7 @@ class instructor_actor {
                     'post_announcement',
                     $activity,
                     null,
-                    $this->namegen->get_post_text()
+                    "posted"
                 );
                 $written++;
                 $announcement_posted = true;
@@ -285,7 +285,7 @@ class instructor_actor {
                     'reply_forum',
                     $activity,
                     (int)$post->postid,
-                    $this->namegen->get_post_text(),
+                    "posted",
                     (int)$post->authorid
                 );
                 $written++;

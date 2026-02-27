@@ -168,22 +168,16 @@ $um     = new user_manager();
 
 if ($list_mode) {
     $tm->activate_due_terms();
-    $terms = $tm->get_active_terms();
-
-    if (empty($terms)) {
-        mtrace('No active terms found.');
-        exit(0);
-    }
 
     if ($term_id !== null) {
-        // List windows for the specific term.
+        // List windows for the specific term — no need to check active terms.
         $term = $DB->get_record('local_activitysimulator_terms', ['id' => $term_id]);
         if (!$term) {
             cli_error("No term found with id=$term_id.");
         }
 
-        mtrace(sprintf('Windows for term id=%d (Week %02d, %d — %s):',
-            $term->id, $term->week_number, $term->year, $term->course_profile));
+        mtrace(sprintf('Windows for term id=%d (Week %02d, %d — %s) [status: %s]:',
+            $term->id, $term->week_number, $term->year, $term->course_profile, $term->status));
         mtrace(str_pad('ID', 6) . str_pad('Label', 30) . str_pad('Scheduled', 20) . str_pad('Status', 12) . 'Force-rerun');
         mtrace(str_repeat('-', 82));
 
@@ -199,29 +193,37 @@ if ($list_mode) {
                 $w->force_rerun ? 'yes' : 'no'
             ));
         }
-    } else {
-        // List all active terms.
-        mtrace(sprintf('%-6s %-10s %-6s %-24s %-12s %-10s %s',
-            'ID', 'Week/Year', 'Prof', 'Category', 'Status', 'Pending', 'Complete'));
-        mtrace(str_repeat('-', 88));
+        exit(0);
+    }
 
-        foreach ($terms as $term) {
-            $pending  = $DB->count_records('local_activitysimulator_windows',
-                ['termid' => $term->id, 'status' => 'pending']);
-            $complete = $DB->count_records('local_activitysimulator_windows',
-                ['termid' => $term->id, 'status' => 'complete']);
-            $category = $DB->get_field('course_categories', 'name', ['id' => $term->categoryid]) ?? '?';
+    $terms = $tm->get_active_terms();
 
-            mtrace(sprintf('%-6d %-10s %-6s %-24s %-12s %-10d %d',
-                $term->id,
-                sprintf('W%02d/%d', $term->week_number, $term->year),
-                substr($term->course_profile, 0, 5),
-                substr($category, 0, 23),
-                $term->status,
-                $pending,
-                $complete
-            ));
-        }
+    if (empty($terms)) {
+        mtrace('No active terms found.');
+        exit(0);
+    }
+
+    // List all active terms.
+    mtrace(sprintf('%-6s %-10s %-6s %-24s %-12s %-10s %s',
+        'ID', 'Week/Year', 'Prof', 'Category', 'Status', 'Pending', 'Complete'));
+    mtrace(str_repeat('-', 88));
+
+    foreach ($terms as $term) {
+        $pending  = $DB->count_records('local_activitysimulator_windows',
+            ['termid' => $term->id, 'status' => 'pending']);
+        $complete = $DB->count_records('local_activitysimulator_windows',
+            ['termid' => $term->id, 'status' => 'complete']);
+        $category = $DB->get_field('course_categories', 'name', ['id' => $term->categoryid]) ?? '?';
+
+        mtrace(sprintf('%-6d %-10s %-6s %-24s %-12s %-10d %d',
+            $term->id,
+            sprintf('W%02d/%d', $term->week_number, $term->year),
+            substr($term->course_profile, 0, 5),
+            substr($category, 0, 23),
+            $term->status,
+            $pending,
+            $complete
+        ));
     }
 
     exit(0);
