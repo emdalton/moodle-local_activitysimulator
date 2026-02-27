@@ -224,6 +224,44 @@ class name_generator {
     }
 
     /**
+     * Returns a subject line for a student forum discussion.
+     *
+     * Uses the same Lear verse cycle as get_post_text() so that subject
+     * lines are varied but clearly synthetic.
+     *
+     * @return string
+     */
+    public function get_discussion_subject(): string {
+        // Use the first line of the next verse as a subject line.
+        $verse = $this->post_verses[$this->verse_index % count($this->post_verses)];
+        // Take just the first sentence or up to 80 chars.
+        $subject = substr(strtok($verse, '.!?'), 0, 80);
+        return trim($subject) ?: 'Discussion post';
+    }
+
+    /**
+     * Returns a subject line for an instructor announcement.
+     *
+     * Cycles through a small fixed set of announcement-style subjects.
+     * Content is clearly synthetic but plausible in tone.
+     *
+     * @return string
+     */
+    public function get_announcement_subject(): string {
+        $subjects = [
+            'Week recap and upcoming activities',
+            'Reminder: check this week\'s materials',
+            'Looking ahead to next section',
+            'Feedback on recent submissions',
+            'Course update and reminders',
+            'Great work this week — a note from your instructor',
+            'Tips for the upcoming activities',
+        ];
+        // Cycle through subjects based on verse_index to avoid repeating.
+        return $subjects[$this->verse_index % count($subjects)];
+    }
+
+    /**
      * Resets all internal counters to zero.
      *
      * Useful in testing when you need reproducible output from a fresh state.

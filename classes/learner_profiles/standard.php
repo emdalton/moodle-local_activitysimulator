@@ -77,4 +77,11 @@ class standard extends base_learner_profile {
     public function get_group_type(): string {
         return 'standard';
     }
+
+    /**
+     * @inheritdoc
+     */
+    public function get_max_forum_reads_per_window(): int {
+        return 2;
+    }
 }

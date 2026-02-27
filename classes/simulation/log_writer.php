@@ -29,290 +29,173 @@ namespace local_activitysimulator\simulation;
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Writes backdated log entries to Moodle's standard logstore and to the
- * plugin's own run_log audit table.
+ * Records simulated actions in the plugin's run_log audit table.
  *
- * BACKDATING APPROACH
- * -------------------
- * Moodle's event system fires events with timecreated = time() and provides
- * no API to override the timestamp. To generate historically accurate log
- * data, this class writes directly to logstore_standard_log rather than
- * going through the event system.
+ * DESIGN
+ * ------
+ * This class no longer writes to any Moodle core table. All entries in
+ * logstore_standard_log are produced by real Moodle events that fire as
+ * side effects of API calls (forum_add_discussion, assign API, etc.) or
+ * from explicitly triggered event classes (view events). The forum_read
+ * table is populated by the \mod_forum\event\discussion_viewed observer.
  *
- * This is intentional and appropriate for a simulation plugin running on a
- * dedicated test Moodle instance. It should never be used on a production
- * site with real user data.
+ * This class has two responsibilities:
  *
- * TIMESTAMP GENERATION
- * --------------------
- * Each log entry receives a timestamp randomly distributed within the
- * window's time-of-day range (AM or PM), on the date of the window's
- * scheduled_time. The AM and PM ranges are read from plugin settings
- * (default 08:00–12:00 and 13:00–17:00).
+ * 1. record_api_action() — called after a real Moodle API creates an object.
+ *    Writes a run_log row with the objectid of the created object.
  *
- * This means multiple log entries for the same user in the same window
- * will have slightly different timestamps, which is realistic and important
- * for analytics tools that look at time-between-events.
+ * 2. fire_view_event() — fires the appropriate Moodle event class for a
+ *    view/read action (view_page, view_course, read_forum, etc.) and then
+ *    writes a run_log row. Firing a real event ensures any observers
+ *    (including forum_read population) run correctly.
  *
- * ACTION TYPES AND EVENT METADATA
- * --------------------------------
- * Each action type maps to a set of logstore column values (eventname,
- * component, action, target, crud, edulevel). These are defined in
- * EVENT_DEFINITIONS below. Only the action types actually simulated by
- * student_actor and instructor_actor need entries here.
+ * SIMULATED_TIME
+ * --------------
+ * Every run_log row records a simulated_time drawn from the window's
+ * scheduled time range. This is stored for analytical reference — it
+ * documents what time-of-day the simulation was targeting — but is not
+ * applied to any Moodle core table. Moodle objects receive real
+ * wall-clock timestamps from the event system.
  *
- * RUN LOG
- * -------
- * Every call to write_action() also inserts a row in
- * local_activitysimulator_run_log. This provides a ground-truth audit trail
- * that can be used to verify analytics results against known inputs.
+ * ACTIVE VS PASSIVE
+ * -----------------
+ * The action_class column ('active' or 'passive') is derived from the
+ * action_type and stored in run_log. This enables the view/engage split
+ * analysis without requiring a join to any other table.
  */
 class log_writer {
 
     /**
-     * Maps action_type strings to logstore_standard_log column values.
-     *
-     * Keys are the action_type strings used in run_log and passed to
-     * write_action(). Values are arrays of logstore column values.
-     *
-     * crud values: 'c' = create, 'r' = read, 'u' = update, 'd' = delete
-     * edulevel values: 0 = other, 1 = teaching, 2 = participating
-     *
-     * @var array<string, array>
-     */
-    const EVENT_DEFINITIONS = [
-
-        // ---- Page ----
-        'view_page' => [
-            'eventname'   => '\mod_page\event\course_module_viewed',
-            'component'   => 'mod_page',
-            'action'      => 'viewed',
-            'target'      => 'course_module',
-            'objecttable' => 'page',
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-
-        // ---- Quiz ----
-        'attempt_quiz' => [
-            'eventname'   => '\mod_quiz\event\attempt_started',
-            'component'   => 'mod_quiz',
-            'action'      => 'started',
-            'target'      => 'attempt',
-            'objecttable' => 'quiz_attempts',
-            'crud'        => 'c',
-            'edulevel'    => 2,
-        ],
-        'submit_quiz' => [
-            'eventname'   => '\mod_quiz\event\attempt_submitted',
-            'component'   => 'mod_quiz',
-            'action'      => 'submitted',
-            'target'      => 'attempt',
-            'objecttable' => 'quiz_attempts',
-            'crud'        => 'u',
-            'edulevel'    => 2,
-        ],
-        'view_quiz_grade' => [
-            'eventname'   => '\mod_quiz\event\attempt_reviewed',
-            'component'   => 'mod_quiz',
-            'action'      => 'reviewed',
-            'target'      => 'attempt',
-            'objecttable' => 'quiz_attempts',
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-
-        // ---- Assignment ----
-        'view_assignment' => [
-            'eventname'   => '\mod_assign\event\course_module_viewed',
-            'component'   => 'mod_assign',
-            'action'      => 'viewed',
-            'target'      => 'course_module',
-            'objecttable' => 'assign',
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-        'submit_assignment' => [
-            'eventname'   => '\mod_assign\event\assessable_submitted',
-            'component'   => 'mod_assign',
-            'action'      => 'submitted',
-            'target'      => 'assessable',
-            'objecttable' => 'assign_submission',
-            'crud'        => 'u',
-            'edulevel'    => 2,
-        ],
-        'grade_assignment' => [
-            'eventname'   => '\mod_assign\event\submission_graded',
-            'component'   => 'mod_assign',
-            'action'      => 'graded',
-            'target'      => 'submission',
-            'objecttable' => 'assign_grades',
-            'crud'        => 'u',
-            'edulevel'    => 1,
-        ],
-
-        // ---- Forum ----
-        'view_forum' => [
-            'eventname'   => '\mod_forum\event\course_module_viewed',
-            'component'   => 'mod_forum',
-            'action'      => 'viewed',
-            'target'      => 'course_module',
-            'objecttable' => 'forum',
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-        'post_forum' => [
-            'eventname'   => '\mod_forum\event\post_created',
-            'component'   => 'mod_forum',
-            'action'      => 'created',
-            'target'      => 'post',
-            'objecttable' => 'forum_posts',
-            'crud'        => 'c',
-            'edulevel'    => 2,
-        ],
-        'reply_forum' => [
-            'eventname'   => '\mod_forum\event\post_created',
-            'component'   => 'mod_forum',
-            'action'      => 'created',
-            'target'      => 'post',
-            'objecttable' => 'forum_posts',
-            'crud'        => 'c',
-            'edulevel'    => 2,
-        ],
-        'read_forum' => [
-            'eventname'   => '\mod_forum\event\discussion_viewed',
-            'component'   => 'mod_forum',
-            'action'      => 'viewed',
-            'target'      => 'discussion',
-            'objecttable' => 'forum_discussions',
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-
-        // ---- Announcements forum ----
-        'post_announcement' => [
-            'eventname'   => '\mod_forum\event\post_created',
-            'component'   => 'mod_forum',
-            'action'      => 'created',
-            'target'      => 'post',
-            'objecttable' => 'forum_posts',
-            'crud'        => 'c',
-            'edulevel'    => 1,
-        ],
-        'read_announcement' => [
-            'eventname'   => '\mod_forum\event\discussion_viewed',
-            'component'   => 'mod_forum',
-            'action'      => 'viewed',
-            'target'      => 'discussion',
-            'objecttable' => 'forum_discussions',
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-
-        // ---- Course-level ----
-        'view_course' => [
-            'eventname'   => '\core\event\course_viewed',
-            'component'   => 'core',
-            'action'      => 'viewed',
-            'target'      => 'course',
-            'objecttable' => null,
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-        'view_grades' => [
-            'eventname'   => '\gradereport_user\event\grade_report_viewed',
-            'component'   => 'gradereport_user',
-            'action'      => 'viewed',
-            'target'      => 'grade_report',
-            'objecttable' => null,
-            'crud'        => 'r',
-            'edulevel'    => 2,
-        ],
-        'view_gradebook' => [
-            'eventname'   => '\gradereport_grader\event\grade_report_viewed',
-            'component'   => 'gradereport_grader',
-            'action'      => 'viewed',
-            'target'      => 'grade_report',
-            'objecttable' => null,
-            'crud'        => 'r',
-            'edulevel'    => 1,
-        ],
-    ];
-
-    /**
-     * Action types that count as 'active' engagement for run_log.action_class.
+     * Action types that count as 'active' engagement.
      * All others are classified as 'passive'.
      *
      * @var string[]
      */
     const ACTIVE_ACTION_TYPES = [
-        'attempt_quiz',
-        'submit_quiz',
-        'submit_assignment',
         'post_forum',
         'reply_forum',
         'post_announcement',
+        'submit_assignment',
         'grade_assignment',
+        'attempt_quiz',
+        'submit_quiz',
+    ];
+
+    /**
+     * Maps view action_type strings to their Moodle event class names and
+     * the data needed to construct them.
+     *
+     * Each entry specifies:
+     *   class    — fully-qualified event class name
+     *   context  — 'module' (uses activity cmid) or 'course'
+     *
+     * @var array<string, array>
+     */
+    const VIEW_EVENT_MAP = [
+        'view_page'         => ['class' => '\mod_page\event\course_module_viewed',           'context' => 'module'],
+        'view_forum'        => ['class' => '\mod_forum\event\course_module_viewed',          'context' => 'module'],
+        'read_forum'        => ['class' => '\mod_forum\event\discussion_viewed',             'context' => 'module'],
+        'read_announcement' => ['class' => '\mod_forum\event\discussion_viewed',             'context' => 'module'],
+        'view_assignment'   => ['class' => '\mod_assign\event\course_module_viewed',         'context' => 'module'],
+        'view_quiz_grade'   => ['class' => '\mod_quiz\event\attempt_reviewed',               'context' => 'module'],
+        'view_course'       => ['class' => '\core\event\course_viewed',                      'context' => 'course'],
+        'view_grades'       => ['class' => '\gradereport_user\event\grade_report_viewed',    'context' => 'course'],
+        'view_gradebook'    => ['class' => '\gradereport_grader\event\grade_report_viewed',  'context' => 'course'],
     ];
 
     /** @var \stdClass Plugin config. */
     private \stdClass $config;
 
-    /** @var \stdClass Window record (from local_activitysimulator_windows). */
+    /** @var \stdClass Window record from local_activitysimulator_windows. */
     private \stdClass $window;
 
-    /** @var string Window type: 'am' or 'pm'. */
+    /** @var string 'am' or 'pm'. */
     private string $window_type;
 
-    /** @var int Window index within term (0-based), for run_log. */
+    /** @var int 0-based window index within term. */
     private int $window_index;
 
-    /** @var int[] Parsed AM window range [start_ts, end_ts] for window's date. */
+    /** @var int[] [start_ts, end_ts] for AM time range on window date. */
     private array $am_range;
 
-    /** @var int[] Parsed PM window range [start_ts, end_ts] for window's date. */
+    /** @var int[] [start_ts, end_ts] for PM time range on window date. */
     private array $pm_range;
 
     /**
      * Constructor.
      *
-     * @param \stdClass $window       Window record from local_activitysimulator_windows.
-     * @param string    $window_type  'am' or 'pm' (from profile::get_window_type()).
-     * @param int       $window_index 0-based position of window within term.
+     * @param \stdClass $window
+     * @param string    $window_type  'am' or 'pm'
+     * @param int       $window_index 0-based position within term
      */
     public function __construct(\stdClass $window, string $window_type, int $window_index) {
         $this->config       = get_config('local_activitysimulator');
         $this->window       = $window;
         $this->window_type  = $window_type;
         $this->window_index = $window_index;
-
-        // Pre-compute AM and PM timestamp ranges for this window's date.
-        $this->am_range = $this->build_time_range('am');
-        $this->pm_range = $this->build_time_range('pm');
+        $this->am_range     = $this->build_time_range('am');
+        $this->pm_range     = $this->build_time_range('pm');
     }
 
+    // =========================================================================
+    // Public: API-created actions
+    // =========================================================================
+
     /**
-     * Writes a simulated action to the logstore and to the plugin run_log.
+     * Records an action performed via a real Moodle API call.
      *
-     * This is the single method called by student_actor and instructor_actor
-     * for every simulated action.
+     * The API call (e.g. forum_add_discussion()) fires events internally,
+     * which write to logstore_standard_log. This method only needs to write
+     * the run_log row.
      *
-     * @param  int            $userid         Moodle user ID of the simulated user.
-     * @param  int            $courseid       Moodle course ID.
-     * @param  string         $action_type    Action type key (must exist in EVENT_DEFINITIONS).
-     * @param  \stdClass|null $activity       Activity descriptor from content_scanner,
-     *                                        or null for course-level actions.
-     * @param  int|null       $objectid       ID of the specific object acted on
-     *                                        (e.g. quiz_attempt.id), or null.
-     * @param  string|null    $outcome        Optional outcome string for run_log
-     *                                        (e.g. 'score_90', 'submitted', 'skipped').
-     * @param  int|null       $relateduserid  For forum read/reply actions: the user ID
-     *                                        of the post author. Stored in the logstore
-     *                                        relateduserid column to enable SNA edge
-     *                                        reconstruction from log data alone.
-     * @return int            ID of the inserted run_log record.
+     * Call this immediately after the API call returns, passing the ID of
+     * the object the API created.
+     *
+     * @param  int            $userid
+     * @param  int            $courseid
+     * @param  string         $action_type  e.g. 'post_forum', 'submit_assignment'
+     * @param  \stdClass|null $activity     Activity descriptor from content_scanner, or null.
+     * @param  int|null       $objectid     ID of the created Moodle object.
+     * @param  string|null    $outcome      e.g. 'posted', 'submitted', 'graded'
+     * @return int            run_log record ID.
      */
-    public function write_action(
+    public function record_api_action(
+        int $userid,
+        int $courseid,
+        string $action_type,
+        ?\stdClass $activity = null,
+        ?int $objectid = null,
+        ?string $outcome = null
+    ): int {
+        return $this->write_run_log(
+            $userid, $courseid, $action_type,
+            $activity, $objectid, $outcome
+        );
+    }
+
+    // =========================================================================
+    // Public: view events
+    // =========================================================================
+
+    /**
+     * Fires a real Moodle event for a view/read action and records it in run_log.
+     *
+     * Firing real events ensures all observers run — most importantly the
+     * forum observer that populates forum_read when a discussion is viewed.
+     *
+     * $USER must already be the simulated user when this is called (i.e.
+     * user_switcher must be active at the call site).
+     *
+     * @param  int            $userid        Must match the currently active $USER->id.
+     * @param  int            $courseid
+     * @param  string         $action_type   Must be a key in VIEW_EVENT_MAP.
+     * @param  \stdClass|null $activity      Activity descriptor, or null for course-level.
+     * @param  int|null       $objectid      Object being viewed (e.g. discussion id, attempt id).
+     * @param  string|null    $outcome
+     * @param  int|null       $relateduserid For read_forum/read_announcement: the post author.
+     * @return int            run_log record ID.
+     */
+    public function fire_view_event(
         int $userid,
         int $courseid,
         string $action_type,
@@ -321,145 +204,138 @@ class log_writer {
         ?string $outcome = null,
         ?int $relateduserid = null
     ): int {
-        $simulated_time = $this->random_timestamp();
-
-        $this->write_logstore_entry(
-            $userid,
-            $courseid,
-            $action_type,
-            $activity,
-            $objectid,
-            $simulated_time,
-            $relateduserid
-        );
-
-        return $this->write_run_log(
-            $userid,
-            $courseid,
-            $action_type,
-            $activity,
-            $simulated_time,
-            $outcome
-        );
-    }
-
-    /**
-     * Inserts a row into Moodle's forum_read table, marking a post as read
-     * by the given user.
-     *
-     * This is separate from write_action() because forum_read is not a
-     * logstore table — it is Moodle's own forum tracking table that drives
-     * the unread post highlight in the forum UI. It must be populated for
-     * the forum UI to behave correctly and for SNA tools to query read
-     * relationships.
-     *
-     * Called for both student and instructor forum reads, once per unread
-     * post per user.
-     *
-     * @param  int $userid       The user who read the post.
-     * @param  int $postid       forum_posts.id
-     * @param  int $discussionid forum_discussions.id
-     * @param  int $forumid      forum.id
-     * @return void
-     */
-    public function write_forum_read(
-        int $userid,
-        int $postid,
-        int $discussionid,
-        int $forumid
-    ): void {
-        global $DB;
-
-        // Skip if already marked read — idempotent.
-        if ($DB->record_exists('forum_read', ['userid' => $userid, 'postid' => $postid])) {
-            return;
+        if (!array_key_exists($action_type, self::VIEW_EVENT_MAP)) {
+            throw new \coding_exception("log_writer: '$action_type' is not a recognised view action type");
         }
 
-        $now = $this->random_timestamp();
+        $map = self::VIEW_EVENT_MAP[$action_type];
 
-        $record = new \stdClass();
-        $record->userid       = $userid;
-        $record->forumid      = $forumid;
-        $record->discussionid = $discussionid;
-        $record->postid       = $postid;
-        $record->firstread    = $now;
-        $record->lastread     = $now;
+        if ($map['context'] === 'module') {
+            if ($activity === null) {
+                throw new \coding_exception("log_writer: activity required for module-context event '$action_type'");
+            }
+            $context = \context_module::instance($activity->cmid);
+        } else {
+            $context = \context_course::instance($courseid);
+        }
 
-        $DB->insert_record('forum_read', $record, false);
+        $this->trigger_view_event($action_type, $map, $context, $courseid, $activity, $objectid, $relateduserid);
+
+        return $this->write_run_log(
+            $userid, $courseid, $action_type,
+            $activity, $objectid, $outcome
+        );
     }
 
-    // -------------------------------------------------------------------------
-    // Private: logstore
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Private: event triggering
+    // =========================================================================
 
     /**
-     * Inserts a row directly into logstore_standard_log with a backdated
-     * timecreated value.
+     * Constructs and triggers the Moodle event for a view action.
+     *
+     * Each event class has slightly different required fields in its data
+     * array. This method handles the per-class variations.
+     *
+     * @param  string      $action_type
+     * @param  array       $map          Entry from VIEW_EVENT_MAP.
+     * @param  \context    $context
+     * @param  int         $courseid
+     * @param  \stdClass|null $activity
+     * @param  int|null    $objectid
+     * @param  int|null    $relateduserid
+     * @return void
+     */
+    private function trigger_view_event(
+        string $action_type,
+        array $map,
+        \context $context,
+        int $courseid,
+        ?\stdClass $activity,
+        ?int $objectid,
+        ?int $relateduserid
+    ): void {
+        $classname = $map['class'];
+
+        // Base data common to all events.
+        $data = [
+            'context'  => $context,
+            'courseid' => $courseid,
+        ];
+
+        if ($objectid !== null) {
+            $data['objectid'] = $objectid;
+        }
+
+        if ($relateduserid !== null) {
+            $data['relateduserid'] = $relateduserid;
+        }
+
+        // Per-event-class variations.
+        switch ($action_type) {
+
+            case 'view_page':
+                // \mod_page\event\course_module_viewed requires objectid = page instance id.
+                $data['objectid'] = $activity->instanceid;
+                break;
+
+            case 'view_forum':
+                // \mod_forum\event\course_module_viewed requires objectid = forum instance id.
+                $data['objectid'] = $activity->instanceid;
+                break;
+
+            case 'read_forum':
+            case 'read_announcement':
+                // \mod_forum\event\discussion_viewed requires objectid = discussion id.
+                // objectid is passed in as the discussion id by the caller.
+                break;
+
+            case 'view_assignment':
+                // \mod_assign\event\course_module_viewed requires objectid = assign instance id.
+                $data['objectid'] = $activity->instanceid;
+                break;
+
+            case 'view_quiz_grade':
+                // \mod_quiz\event\attempt_reviewed requires objectid = attempt id.
+                // objectid is passed in as the attempt id by the caller.
+                $data['other'] = ['attemptid' => $objectid];
+                break;
+
+            case 'view_course':
+                // \core\event\course_viewed requires objectid = course id.
+                $data['objectid'] = $courseid;
+                break;
+
+            case 'view_grades':
+                // \gradereport_user\event\grade_report_viewed requires other[courseid].
+                $data['other'] = ['courseid' => $courseid];
+                break;
+
+            case 'view_gradebook':
+                // \gradereport_grader\event\grade_report_viewed requires other[courseid].
+                $data['other'] = ['courseid' => $courseid];
+                break;
+        }
+
+        $event = $classname::create($data);
+        $event->trigger();
+    }
+
+    // =========================================================================
+    // Private: run_log
+    // =========================================================================
+
+    /**
+     * Inserts a row into local_activitysimulator_run_log.
+     *
+     * simulated_time is drawn from the window's scheduled time range and
+     * stored here for reference. It is not applied to any Moodle core table.
      *
      * @param  int            $userid
      * @param  int            $courseid
      * @param  string         $action_type
      * @param  \stdClass|null $activity
      * @param  int|null       $objectid
-     * @param  int            $simulated_time
-     * @param  int|null       $relateduserid
-     * @return void
-     */
-    private function write_logstore_entry(
-        int $userid,
-        int $courseid,
-        string $action_type,
-        ?\stdClass $activity,
-        ?int $objectid,
-        int $simulated_time,
-        ?int $relateduserid = null
-    ): void {
-        global $DB;
-
-        if (!array_key_exists($action_type, self::EVENT_DEFINITIONS)) {
-            throw new \coding_exception("log_writer: unknown action_type '$action_type'");
-        }
-
-        $def = self::EVENT_DEFINITIONS[$action_type];
-
-        $context = $activity !== null
-            ? \context_module::instance($activity->cmid)
-            : \context_course::instance($courseid);
-
-        $record = new \stdClass();
-        $record->eventname         = $def['eventname'];
-        $record->component         = $def['component'];
-        $record->action            = $def['action'];
-        $record->target            = $def['target'];
-        $record->objecttable       = $def['objecttable'];
-        $record->objectid          = $objectid;
-        $record->crud              = $def['crud'];
-        $record->edulevel          = $def['edulevel'];
-        $record->contextid         = $context->id;
-        $record->contextlevel      = $context->contextlevel;
-        $record->contextinstanceid = $activity ? $activity->cmid : $courseid;
-        $record->userid            = $userid;
-        $record->courseid          = $courseid;
-        $record->relateduserid     = $relateduserid;
-        $record->anonymous         = 0;
-        $record->other             = null;
-        $record->timecreated       = $simulated_time;
-
-        $DB->insert_record('logstore_standard_log', $record, false);
-    }
-
-    // -------------------------------------------------------------------------
-    // Private: run_log
-    // -------------------------------------------------------------------------
-
-    /**
-     * Inserts a row into local_activitysimulator_run_log.
-     *
-     * @param  int            $userid
-     * @param  int            $courseid
-     * @param  string         $action_type
-     * @param  \stdClass|null $activity
-     * @param  int            $simulated_time
      * @param  string|null    $outcome
      * @return int            Inserted record ID.
      */
@@ -468,14 +344,10 @@ class log_writer {
         int $courseid,
         string $action_type,
         ?\stdClass $activity,
-        int $simulated_time,
+        ?int $objectid,
         ?string $outcome
     ): int {
         global $DB;
-
-        $action_class = in_array($action_type, self::ACTIVE_ACTION_TYPES)
-            ? 'active'
-            : 'passive';
 
         $record = new \stdClass();
         $record->termid         = $this->window->termid;
@@ -484,21 +356,24 @@ class log_writer {
         $record->courseid       = $courseid;
         $record->userid         = $userid;
         $record->action_type    = $action_type;
-        $record->action_class   = $action_class;
+        $record->action_class   = in_array($action_type, self::ACTIVE_ACTION_TYPES) ? 'active' : 'passive';
         $record->cmid           = $activity ? $activity->cmid : null;
-        $record->simulated_time = $simulated_time;
+        $record->objectid       = $objectid;
+        $record->simulated_time = $this->random_timestamp();
         $record->outcome        = $outcome;
         $record->timecreated    = time();
 
         return (int)$DB->insert_record('local_activitysimulator_run_log', $record);
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Private: timestamp generation
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     /**
      * Returns a random Unix timestamp within the current window's time range.
+     *
+     * Used only for run_log.simulated_time (reference only).
      *
      * @return int
      */
@@ -508,11 +383,10 @@ class log_writer {
     }
 
     /**
-     * Builds a [start_timestamp, end_timestamp] pair for a given window type
-     * on the date of this window's scheduled_time.
+     * Builds a [start_ts, end_ts] pair for 'am' or 'pm' on the window date.
      *
-     * @param  string $type 'am' or 'pm'.
-     * @return int[]        [start_unix_timestamp, end_unix_timestamp].
+     * @param  string $type 'am' or 'pm'
+     * @return int[]
      */
     private function build_time_range(string $type): array {
         $start_hhmm = $this->config->{$type . '_window_start'} ?? ($type === 'am' ? '08:00' : '13:00');
@@ -531,9 +405,9 @@ class log_writer {
     }
 
     /**
-     * Converts an HH:MM string to seconds since midnight.
+     * Converts HH:MM string to seconds since midnight.
      *
-     * @param  string $hhmm e.g. '08:00', '13:30'.
+     * @param  string $hhmm e.g. '08:00', '13:30'
      * @return int
      */
     private function hhmm_to_seconds(string $hhmm): int {

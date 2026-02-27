@@ -29,55 +29,45 @@ namespace local_activitysimulator\simulation;
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Discovers activities present in a course section at runtime.
- *
- * Rather than hardcoding which activities exist in which section,
- * window_runner calls content_scanner to discover what is actually present.
- * This makes the simulation engine work correctly on any course that follows
- * the structural conventions of the active course profile, regardless of
- * exact activity names or IDs.
+ * Discovers activities present in a course section at runtime and provides
+ * forum state queries used by student_actor and instructor_actor.
  *
  * USAGE
  * -----
  * Instantiate once per course per window run. The modinfo object is cached
- * on the instance so repeated calls to get_activities_in_section() for the
- * same course are cheap.
- *
- *   $scanner = new content_scanner($courseid);
- *   $activities = $scanner->get_activities_in_section($section_number);
- *   foreach ($activities as $activity) {
- *       // $activity->type, ->cmid, ->instanceid, ->name, ->duedate
- *   }
+ * on the instance so repeated calls to get_activities_in_section() are cheap.
  *
  * ACTIVITY DESCRIPTORS
  * --------------------
- * Each returned descriptor is a plain object with these properties:
+ * get_activities_in_section() returns plain objects with:
  *
- *   type       string   Activity type: 'page', 'quiz', 'assignment', 'forum'
- *   cmid       int      Course module ID (used in Moodle API calls)
- *   instanceid int      ID in the activity's own table (quiz.id, assign.id, etc.)
- *   name       string   Display name of the activity
- *   section    int      Section number (1-based, matches course profile sections)
- *   duedate    int|null Unix timestamp of due date, or null if none set
+ *   type       string   'page', 'quiz', 'assignment', 'forum'
+ *   cmid       int      Course module ID
+ *   instanceid int      ID in the activity's own table
+ *   name       string   Display name
+ *   section    int      1-based section number
+ *   duedate    int|null Unix timestamp of due date, or null
  *
- * SUPPORTED ACTIVITY TYPES
- * ------------------------
- * Only activity types recognised by student_actor and instructor_actor are
- * returned. Unknown module types (e.g. LTI, SCORM) are silently skipped.
- * To add support for a new type, add it to SUPPORTED_MODNAMES and implement
- * the corresponding handler in student_actor/instructor_actor.
+ * FORUM STATE QUERIES
+ * -------------------
+ * Three methods provide the forum state needed by the simulation:
+ *
+ *   get_user_discussion()    — the discussion this user started (or null)
+ *   get_other_discussions()  — discussions started by other users (reply targets)
+ *   get_unread_discussions() — discussions the user hasn't read yet
+ *
+ * These all query at execution time, so the state naturally accumulates as
+ * actors run sequentially within a window.
  *
  * ANNOUNCEMENTS FORUM
  * -------------------
- * The course-level Announcements forum (forum type = 'news') is excluded
- * from section scans. It is handled separately by instructor_actor as a
- * special case. This is true even if the Announcements forum is somehow
- * placed inside a numbered section.
+ * The course Announcements forum (forum.type = 'news') is excluded from
+ * section scans and returned separately via get_announcements_forum().
  */
 class content_scanner {
 
     /**
-     * Map from Moodle modname to the activity type string used in this plugin.
+     * Map from Moodle modname to plugin activity type string.
      * Only modnames listed here are returned by get_activities_in_section().
      *
      * @var array<string,string>
@@ -92,47 +82,46 @@ class content_scanner {
     /** @var int Course ID. */
     private int $courseid;
 
-    /** @var \course_modinfo|null Cached modinfo for this course. */
+    /** @var \course_modinfo|null Cached modinfo. */
     private ?\course_modinfo $modinfo = null;
 
-    /** @var array<int,int|null> Cache of due dates keyed by cmid. */
+    /** @var array<int,int|null> Due date cache keyed by cmid. */
     private array $duedate_cache = [];
+
+    /** @var array<int,bool> Announcements forum cache keyed by forum instanceid. */
+    private array $news_forum_cache = [];
 
     /**
      * Constructor.
      *
-     * @param int $courseid Moodle course ID.
+     * @param int $courseid
      */
     public function __construct(int $courseid) {
         $this->courseid = $courseid;
     }
 
+    // =========================================================================
+    // Public: section scanning
+    // =========================================================================
+
     /**
      * Returns all supported activities in a given course section.
      *
-     * Section numbers are 1-based, matching the course profile convention.
-     * Moodle internally uses 0-based section numbers (section 0 is the
-     * course header); this method handles the offset transparently.
+     * Section numbers are 1-based (matching course profile convention).
+     * Moodle section 0 is the course header and is never scanned here.
      *
-     * Activities are returned in the order Moodle stores them within the
-     * section (i.e. the order they appear on the course page).
-     *
-     * @param  int      $section 1-based section number.
-     * @return \stdClass[]       Array of activity descriptor objects.
+     * @param  int        $section 1-based section number.
+     * @return \stdClass[]
      */
     public function get_activities_in_section(int $section): array {
         $modinfo  = $this->get_modinfo();
         $sections = $modinfo->get_section_info_all();
 
-        // Convert 1-based section number to 0-based Moodle section index.
-        // Section 0 in Moodle is the course header; our section 1 = Moodle section 1.
-        $moodle_section = $section; // No offset needed: profile section 1 = Moodle section 1.
-
-        if (!isset($sections[$moodle_section])) {
+        if (!isset($sections[$section])) {
             return [];
         }
 
-        $section_info = $sections[$moodle_section];
+        $section_info = $sections[$section];
         $cms          = $modinfo->get_cms();
         $activities   = [];
 
@@ -144,28 +133,25 @@ class content_scanner {
 
             $cm = $cms[$cmid];
 
-            // Skip deleted or invisible modules.
             if ($cm->deletioninprogress || !$cm->uservisible) {
                 continue;
             }
 
-            // Skip unsupported module types.
             if (!array_key_exists($cm->modname, self::SUPPORTED_MODNAMES)) {
                 continue;
             }
 
-            // Skip the Announcements forum.
-            if ($cm->modname === 'forum' && $this->is_announcements_forum($cm)) {
+            if ($cm->modname === 'forum' && $this->is_announcements_forum($cm->instance)) {
                 continue;
             }
 
-            $descriptor           = new \stdClass();
-            $descriptor->type     = self::SUPPORTED_MODNAMES[$cm->modname];
-            $descriptor->cmid     = (int)$cm->id;
+            $descriptor             = new \stdClass();
+            $descriptor->type       = self::SUPPORTED_MODNAMES[$cm->modname];
+            $descriptor->cmid       = (int)$cm->id;
             $descriptor->instanceid = (int)$cm->instance;
-            $descriptor->name     = $cm->name;
-            $descriptor->section  = $section;
-            $descriptor->duedate  = $this->get_duedate($cm);
+            $descriptor->name       = $cm->name;
+            $descriptor->section    = $section;
+            $descriptor->duedate    = $this->get_duedate($cm);
 
             $activities[] = $descriptor;
         }
@@ -176,16 +162,13 @@ class content_scanner {
     /**
      * Returns the Announcements forum cm_info for this course, or null.
      *
-     * Used by instructor_actor to post announcements. Returns null if no
-     * Announcements forum exists in the course.
-     *
      * @return \cm_info|null
      */
     public function get_announcements_forum(): ?\cm_info {
         $modinfo = $this->get_modinfo();
 
         foreach ($modinfo->get_instances_of('forum') as $cm) {
-            if ($this->is_announcements_forum($cm)) {
+            if ($this->is_announcements_forum($cm->instance)) {
                 return $cm;
             }
         }
@@ -193,11 +176,106 @@ class content_scanner {
         return null;
     }
 
+    // =========================================================================
+    // Public: forum state queries
+    // =========================================================================
+
+    /**
+     * Returns the discussion this user started in the given forum, or null.
+     *
+     * Used by student_actor to decide whether to create a new discussion
+     * (if null) or reply to someone else's (if already posted).
+     *
+     * Queries forum_discussions directly for authoritative state. Results
+     * are not cached — state changes as actors run within the window.
+     *
+     * @param  int      $forumid  forum.id (instance id, not cmid).
+     * @param  int      $userid
+     * @return \stdClass|null     forum_discussions record, or null.
+     */
+    public function get_user_discussion(int $forumid, int $userid): ?\stdClass {
+        global $DB;
+
+        $record = $DB->get_record('forum_discussions', [
+            'forum'  => $forumid,
+            'userid' => $userid,
+        ]);
+
+        return $record ?: null;
+    }
+
+    /**
+     * Returns discussions in a forum not started by the given user.
+     *
+     * Used by student_actor to find reply targets. Returns all qualifying
+     * discussions ordered by creation time ascending (oldest first), so
+     * students who run later in a window have more discussions to reply to.
+     *
+     * @param  int      $forumid
+     * @param  int      $userid  The user who will be replying (exclude their own).
+     * @return \stdClass[]       forum_discussions records.
+     */
+    public function get_other_discussions(int $forumid, int $userid): array {
+        global $DB;
+
+        return array_values($DB->get_records_select(
+            'forum_discussions',
+            'forum = :forumid AND userid != :userid',
+            ['forumid' => $forumid, 'userid' => $userid],
+            'timemodified ASC'
+        ));
+    }
+
+    /**
+     * Returns discussions in a forum that the given user has not yet read.
+     *
+     * A discussion is considered read if the user has a forum_read entry
+     * for the first post of that discussion (the discussion post itself).
+     *
+     * Used by student_actor and instructor_actor to find discussions to read.
+     * Results are ordered by creation time ascending so older discussions
+     * are read first — consistent with natural reading order.
+     *
+     * Each returned object has:
+     *   ->discussionid  int  forum_discussions.id
+     *   ->firstpostid   int  forum_posts.id of the discussion's first post
+     *   ->authorid      int  userid of the discussion creator
+     *   ->forumid       int  forum.id
+     *
+     * @param  int      $forumid
+     * @param  int      $userid
+     * @return \stdClass[]
+     */
+    public function get_unread_discussions(int $forumid, int $userid): array {
+        global $DB;
+
+        // A discussion's "first post" is the post where forum_posts.parent = 0
+        // within that discussion. We check forum_read against that post id.
+        $sql = "SELECT fd.id AS discussionid,
+                       fp.id AS firstpostid,
+                       fd.userid AS authorid,
+                       fd.forum AS forumid
+                  FROM {forum_discussions} fd
+                  JOIN {forum_posts} fp
+                    ON fp.discussion = fd.id
+                   AND fp.parent = 0
+             LEFT JOIN {forum_read} fr
+                    ON fr.postid = fp.id
+                   AND fr.userid = :userid
+                 WHERE fd.forum = :forumid
+                   AND fd.userid != :userid2
+                   AND fr.id IS NULL
+              ORDER BY fd.timemodified ASC";
+
+        return array_values($DB->get_records_sql($sql, [
+            'forumid' => $forumid,
+            'userid'  => $userid,
+            'userid2' => $userid,
+        ]));
+    }
+
     /**
      * Returns all section numbers that contain at least one supported activity.
-     *
-     * Useful for window_runner to verify the course was set up correctly
-     * before attempting simulation.
      *
      * @return int[] 1-based section numbers.
      */
@@ -206,10 +284,8 @@ class content_scanner {
         $sections = $modinfo->get_section_info_all();
         $result   = [];
 
-        // Start from section index 1 — skip section 0 (course header).
         for ($i = 1; $i < count($sections); $i++) {
-            $activities = $this->get_activities_in_section($i);
-            if (!empty($activities)) {
+            if (!empty($this->get_activities_in_section($i))) {
                 $result[] = $i;
             }
         }
@@ -217,54 +293,9 @@ class content_scanner {
         return $result;
     }
 
-    /**
-     * Returns all posts in a forum that the given user has not yet read,
-     * excluding their own posts.
-     *
-     * Queries forum_read at execution time, so actors who run later in a
-     * window naturally see posts written by actors who ran earlier. This
-     * drives the realistic within-window read accumulation pattern.
-     *
-     * Used for both section forums and the announcements forum. Passing the
-     * announcements forum's instanceid gives unread announcements.
-     *
-     * Each returned object has:
-     *   ->postid        int   forum_posts.id
-     *   ->authorid      int   forum_posts.userid (the post author)
-     *   ->discussionid  int   forum_discussions.id
-     *   ->forumid       int   forum.id
-     *
-     * Results are ordered by post creation time ascending, so earlier posts
-     * are read first — consistent with natural reading behaviour.
-     *
-     * @param  int      $forumid  forum.id (not cmid — the forum instance ID).
-     * @param  int      $userid   The user whose read state to check.
-     * @return \stdClass[]        Array of unread post descriptor objects.
-     */
-    public function get_unread_posts(int $forumid, int $userid): array {
-        global $DB;
-
-        $sql = "SELECT fp.id AS postid, fp.userid AS authorid,
-                       fd.id AS discussionid, f.id AS forumid
-                  FROM {forum_posts} fp
-                  JOIN {forum_discussions} fd ON fd.id = fp.discussion
-                  JOIN {forum} f ON f.id = fd.forum
-             LEFT JOIN {forum_read} fr ON fr.postid = fp.id AND fr.userid = :userid
-                 WHERE f.id = :forumid
-                   AND fp.userid != :userid2
-                   AND fr.id IS NULL
-              ORDER BY fp.created ASC";
-
-        return array_values($DB->get_records_sql($sql, [
-            'userid'  => $userid,
-            'forumid' => $forumid,
-            'userid2' => $userid,
-        ]));
-    }
-
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Private helpers
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     /**
      * Returns (and caches) the modinfo object for this course.
@@ -279,60 +310,55 @@ class content_scanner {
     }
 
     /**
-     * Returns true if the given forum cm_info is the Announcements forum.
+     * Returns true if the given forum instance id is the Announcements forum.
      *
-     * Checks the forum.type column in the database. Results are not cached
-     * since this is called infrequently (once per forum per scan).
+     * Result is cached per instance id to avoid repeated DB queries when
+     * the same forum appears in multiple section scans.
      *
-     * @param  \cm_info $cm
+     * @param  int  $foruminstanceid  forum.id
      * @return bool
      */
-    private function is_announcements_forum(\cm_info $cm): bool {
-        global $DB;
-        $type = $DB->get_field('forum', 'type', ['id' => $cm->instance]);
-        return $type === 'news';
+    private function is_announcements_forum(int $foruminstanceid): bool {
+        if (!array_key_exists($foruminstanceid, $this->news_forum_cache)) {
+            global $DB;
+            $type = $DB->get_field('forum', 'type', ['id' => $foruminstanceid]);
+            $this->news_forum_cache[$foruminstanceid] = ($type === 'news');
+        }
+        return $this->news_forum_cache[$foruminstanceid];
     }
 
     /**
      * Returns the due date for an activity, or null if none is set.
      *
-     * Due dates are fetched from the activity's own table and cached by cmid.
-     * Supported activity types and their due date columns:
+     * Due date columns by modname:
      *   quiz   — timeclose (0 = no due date)
      *   assign — duedate   (0 = no due date)
-     *   page   — no due date
-     *   forum  — no due date
+     *   page, forum — no due date
      *
      * @param  \cm_info  $cm
-     * @return int|null  Unix timestamp, or null if no due date.
+     * @return int|null
      */
     private function get_duedate(\cm_info $cm): ?int {
-        global $DB;
-
         $cmid = (int)$cm->id;
 
         if (array_key_exists($cmid, $this->duedate_cache)) {
             return $this->duedate_cache[$cmid];
         }
 
+        global $DB;
         $duedate = null;
 
         switch ($cm->modname) {
             case 'quiz':
-                $val = $DB->get_field('quiz', 'timeclose', ['id' => $cm->instance]);
+                $val     = $DB->get_field('quiz', 'timeclose', ['id' => $cm->instance]);
                 $duedate = ($val && $val > 0) ? (int)$val : null;
                 break;
-
             case 'assign':
-                $val = $DB->get_field('assign', 'duedate', ['id' => $cm->instance]);
+                $val     = $DB->get_field('assign', 'duedate', ['id' => $cm->instance]);
                 $duedate = ($val && $val > 0) ? (int)$val : null;
                 break;
-
-            case 'page':
-            case 'forum':
             default:
                 $duedate = null;
-                break;
         }
 
         $this->duedate_cache[$cmid] = $duedate;

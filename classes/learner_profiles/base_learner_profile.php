@@ -147,6 +147,24 @@ abstract class base_learner_profile {
      */
     abstract public function get_group_type(): string;
 
+    /**
+     * Returns the maximum number of forum discussions this learner will read
+     * in a single activity window.
+     *
+     * This caps the passive forum reading loop in student_actor. It reflects
+     * the real-world pattern where different learner archetypes invest
+     * different amounts of time reading peers' work:
+     *
+     *   overachiever  — reads every available discussion (PHP_INT_MAX)
+     *   standard      — reads up to 2 (the typical course requirement)
+     *   intermittent  — reads at most 1
+     *   failing       — reads 0 (relies entirely on the base passive roll;
+     *                    rarely engages with forum at all)
+     *
+     * @return int Maximum discussions to read per window (PHP_INT_MAX = unlimited).
+     */
+    abstract public function get_max_forum_reads_per_window(): int;
+
     // -------------------------------------------------------------------------
     // Concrete methods — shared logic for all subtypes
     // -------------------------------------------------------------------------

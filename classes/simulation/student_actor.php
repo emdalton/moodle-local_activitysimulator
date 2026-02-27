@@ -12,7 +12,7 @@
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>. 
 
 /**
  * Student actor for the activity simulator.
@@ -28,63 +28,59 @@ namespace local_activitysimulator\simulation;
 
 defined('MOODLE_INTERNAL') || die();
 
+require_once($GLOBALS['CFG']->dirroot . '/mod/forum/lib.php');
+require_once($GLOBALS['CFG']->dirroot . '/mod/assign/locallib.php');
+
 use local_activitysimulator\learner_profiles\base_learner_profile;
 use local_activitysimulator\data\name_generator;
 
 /**
  * Simulates the actions of a single student in a single activity window.
  *
- * Called by window_runner once per enrolled student per window. Decides
- * which actions to simulate based on the student's learner profile and
- * writes them via log_writer.
+ * Called by window_runner once per enrolled student per window. Uses real
+ * Moodle APIs with $USER temporarily switched to the simulated student so
+ * that all created objects are correctly attributed.
  *
  * ACTION SEQUENCE
  * ---------------
- * For each window a student is present in, the sequence is:
+ * 1. Engagement roll — if the student doesn't engage, exit with no actions.
  *
- * 1. View course (passive) — entry point to the LMS session. Skipped only
- *    if the student does not engage with anything in this window at all.
- *    Determined by a single passive engagement roll before the activity loop.
+ * 2. View course (passive view event).
  *
- * 2. For each activity in the section (in section order):
+ * 3. For each activity in the section:
  *
  *    Page:
- *      passive roll → view_page
- *
- *    Quiz:
- *      active roll  → attempt_quiz + submit_quiz
- *      passive roll → view_quiz_grade  (only if active succeeded)
- *      (no passive-only path for quiz — a student either attempts or skips)
- *
- *    Assignment:
- *      active roll  → view_assignment + submit_assignment
- *      else passive roll → view_assignment  (looked but didn't submit)
+ *      passive roll → fire view_page event
  *
  *    Forum:
- *      active roll  → post_forum (with generated text) + read_forum
- *      else passive roll → view_forum  (read without posting)
+ *      Active path:
+ *        If student has no discussion in this forum yet:
+ *          active roll → forum_add_discussion() → post_forum
+ *        If student already has a discussion:
+ *          active roll → forum_add_post() replying to a random other
+ *                        student's discussion → reply_forum
+ *        (If no other discussions exist to reply to, skip active action.)
+ *      Passive path (independent of active):
+ *        Read up to profile->get_max_forum_reads_per_window() unread
+ *        discussions via discussion_viewed event → read_forum
  *
- * 3. View grades (passive, late-term weighted) — probability increases
- *    linearly from 0 at window 0 to full passive probability at the final
- *    window. Reflects the realistic pattern of grade-checking becoming more
- *    common as assessments accumulate.
+ *    Assignment:
+ *      active roll  → assign API submit → submit_assignment
+ *      else passive roll → view_assignment event
  *
- * 4. Read announcements (passive) — only if an announcement was posted by
- *    the instructor in this window. The instructor_actor sets this flag on
- *    the window context object passed to simulate().
+ *    Quiz: stub — deferred to Stage 3.
  *
- * EARLY EXIT
- * ----------
- * If the initial passive engagement roll fails, the student does nothing
- * this window. No log entries are written. This is the primary mechanism
- * by which failing and intermittent students generate sparse activity
- * patterns.
+ * 4. Read unread announcements (passive read event).
  *
- * FORUM TEXT
- * ----------
- * Forum posts use text from name_generator::get_post_text(), which cycles
- * through the 26 Lear verses. Post content has no semantic meaning — it
- * exists only to populate the forum_posts table with plausible-length text.
+ * 5. View grades (passive, probability weighted toward later windows).
+ *
+ * USER SWITCHING
+ * --------------
+ * Every action that calls a Moodle API or fires a Moodle event uses
+ * user_switcher to ensure $USER is the simulated student. The switcher
+ * is constructed and restored within each private simulate_* method
+ * using try/finally so that $USER is always restored even if the API
+ * throws an exception.
  */
 class student_actor {
 
@@ -100,7 +96,7 @@ class student_actor {
     /** @var int Total windows in term, for decay and grade-view weighting. */
     private int $total_windows;
 
-    /** @var bool Emit per-student mtrace() lines when true. */
+    /** @var bool Emit per-student mtrace() lines. */
     private bool $verbose;
 
     /**
@@ -109,8 +105,8 @@ class student_actor {
      * @param log_writer      $log_writer
      * @param content_scanner $scanner
      * @param name_generator  $namegen
-     * @param int             $total_windows Total windows in the term.
-     * @param bool            $verbose       Emit per-student progress lines.
+     * @param int             $total_windows
+     * @param bool            $verbose
      */
     public function __construct(
         log_writer $log_writer,
@@ -129,12 +125,12 @@ class student_actor {
     /**
      * Simulates one student's actions in one window.
      *
-     * @param  int                  $userid        Moodle user ID.
-     * @param  int                  $courseid      Moodle course ID.
-     * @param  int                  $section       1-based section number for this window.
+     * @param  int                  $userid
+     * @param  int                  $courseid
+     * @param  int                  $section       1-based section number.
      * @param  int                  $window_index  0-based window position within term.
-     * @param  base_learner_profile $profile       The student's learner profile instance.
-     * @return int                  Number of log entries written (0 = student skipped window).
+     * @param  base_learner_profile $profile
+     * @return int                  Number of actions taken (0 = student skipped window).
      */
     public function simulate(
         int $userid,
@@ -145,67 +141,63 @@ class student_actor {
     ): int {
         $written = 0;
 
-        // Initial engagement roll — if the student doesn't engage at all,
-        // exit immediately with no log entries.
+        // Initial engagement roll.
         if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
             if ($this->verbose) {
-                $username = $this->get_username($userid);
-                mtrace(sprintf('      student %s [%s] window %d: skipped (engagement roll failed)',
-                    $username, $profile->get_group_type(), $window_index));
+                mtrace(sprintf('      student %s [%s] window %d: skipped',
+                    $this->get_username($userid), $profile->get_group_type(), $window_index));
             }
             return 0;
         }
 
-        // 1. View course — the student has shown up.
-        $this->log_writer->write_action($userid, $courseid, 'view_course');
+        // 1. View course.
+        $switcher = new user_switcher($userid);
+        try {
+            $this->log_writer->fire_view_event($userid, $courseid, 'view_course');
+        } finally {
+            $switcher->restore();
+        }
         $written++;
 
-        // 2. Activities in this section.
+        // 2. Activities in section.
         $activities = $this->scanner->get_activities_in_section($section);
-
         foreach ($activities as $activity) {
             $written += $this->simulate_activity($userid, $courseid, $activity, $window_index, $profile);
         }
 
-        // 3. Read unread announcements posted by instructors.
-        // Announcements are posted at the end of the prior window — students
-        // encounter them as unread posts at the start of the current window.
-        //
-        // TODO: When supporting locally designed courses, check whether the
-        // Announcements forum allows student replies (forum->type and course
-        // settings). Default behaviour is read-only (no student replies).
-        // The $allow_announcement_replies flag below controls this.
-        $allow_announcement_replies = false; // Default: read-only for students.
-        $written += $this->simulate_announcements($userid, $courseid, $window_index, $profile, $allow_announcement_replies);
+        // 3. Read unread announcements.
+        $written += $this->simulate_announcements($userid, $courseid, $window_index, $profile);
 
-        // 4. View grades — passive, weighted toward later windows.
+        // 4. View grades (weighted toward later windows).
         if ($this->should_view_grades($window_index, $profile)) {
-            $this->log_writer->write_action($userid, $courseid, 'view_grades');
+            $switcher = new user_switcher($userid);
+            try {
+                $this->log_writer->fire_view_event($userid, $courseid, 'view_grades');
+            } finally {
+                $switcher->restore();
+            }
             $written++;
         }
 
         if ($this->verbose) {
-            $username = $this->get_username($userid);
-            mtrace(sprintf('      student %s [%s] window %d: engaged, %d entries',
-                $username, $profile->get_group_type(), $window_index, $written));
+            mtrace(sprintf('      student %s [%s] window %d: %d actions',
+                $this->get_username($userid), $profile->get_group_type(), $window_index, $written));
         }
 
         return $written;
     }
 
-    // -------------------------------------------------------------------------
-    // Private: per-activity simulation
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Private: per-activity dispatch
+    // =========================================================================
 
     /**
-     * Simulates a student's interaction with a single activity.
-     *
      * @param  int                  $userid
      * @param  int                  $courseid
-     * @param  \stdClass            $activity   Descriptor from content_scanner.
+     * @param  \stdClass            $activity
      * @param  int                  $window_index
      * @param  base_learner_profile $profile
-     * @return int                  Number of log entries written.
+     * @return int
      */
     private function simulate_activity(
         int $userid,
@@ -217,19 +209,24 @@ class student_actor {
         switch ($activity->type) {
             case 'page':
                 return $this->simulate_page($userid, $courseid, $activity, $window_index, $profile);
-            case 'quiz':
-                return $this->simulate_quiz($userid, $courseid, $activity, $window_index, $profile);
-            case 'assignment':
-                return $this->simulate_assignment($userid, $courseid, $activity, $window_index, $profile);
             case 'forum':
                 return $this->simulate_forum($userid, $courseid, $activity, $window_index, $profile);
+            case 'assignment':
+                return $this->simulate_assignment($userid, $courseid, $activity, $window_index, $profile);
+            case 'quiz':
+                // Stage 3 — not yet implemented.
+                return 0;
             default:
                 return 0;
         }
     }
 
+    // =========================================================================
+    // Private: page
+    // =========================================================================
+
     /**
-     * Page: passive view only.
+     * Passive view only.
      *
      * @return int
      */
@@ -243,187 +240,32 @@ class student_actor {
         if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
             return 0;
         }
-        $this->log_writer->write_action($userid, $courseid, 'view_page', $activity);
+
+        $switcher = new user_switcher($userid);
+        try {
+            $this->log_writer->fire_view_event($userid, $courseid, 'view_page', $activity, $activity->instanceid);
+        } finally {
+            $switcher->restore();
+        }
+
         return 1;
     }
 
-    /**
-     * Quiz: active attempt + submit, with optional passive grade review.
-     *
-     * No passive-only path — a student either attempts the quiz or skips it.
-     * Grade review only happens if the attempt succeeded.
-     *
-     * @return int
-     */
-    private function simulate_quiz(
-        int $userid,
-        int $courseid,
-        \stdClass $activity,
-        int $window_index,
-        base_learner_profile $profile
-    ): int {
-        $written = 0;
-
-        if (!$profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
-            return 0;
-        }
-
-        $this->log_writer->write_action($userid, $courseid, 'attempt_quiz', $activity, $activity->instanceid);
-        $written++;
-
-        $this->log_writer->write_action($userid, $courseid, 'submit_quiz', $activity, $activity->instanceid, 'submitted');
-        $written++;
-
-        // Passive follow-up: check grade after submitting.
-        if ($profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
-            $this->log_writer->write_action($userid, $courseid, 'view_quiz_grade', $activity, $activity->instanceid);
-            $written++;
-        }
-
-        return $written;
-    }
+    // =========================================================================
+    // Private: forum
+    // =========================================================================
 
     /**
-     * Assignment: active submit, or passive view-only.
+     * Forum: create discussion or reply (active), then read discussions (passive).
      *
-     * A student who doesn't submit may still view the assignment brief —
-     * this is the "looked but didn't submit" pattern that is analytically
-     * significant for intermittent and failing learners.
+     * Active path (one attempt per window per forum):
+     *   - If student has no discussion in this forum → create one.
+     *   - If student already has a discussion → reply to a random other's discussion.
+     *   - If no other discussions exist to reply to → skip active action gracefully.
      *
-     * @return int
-     */
-    private function simulate_assignment(
-        int $userid,
-        int $courseid,
-        \stdClass $activity,
-        int $window_index,
-        base_learner_profile $profile
-    ): int {
-        $written = 0;
-
-        if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
-            // View then submit.
-            $this->log_writer->write_action($userid, $courseid, 'view_assignment', $activity);
-            $written++;
-            $this->log_writer->write_action($userid, $courseid, 'submit_assignment', $activity, $activity->instanceid, 'submitted');
-            $written++;
-        } else if ($profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
-            // Viewed but did not submit.
-            $this->log_writer->write_action($userid, $courseid, 'view_assignment', $activity, null, 'viewed_only');
-            $written++;
-        }
-
-        return $written;
-    }
-
-    /**
-     * Reads unread announcements and optionally replies.
-     *
-     * Announcements are posted by instructors at the end of the prior window.
-     * Students encounter them as unread posts via the forum_read table.
-     *
-     * @param  int                  $userid
-     * @param  int                  $courseid
-     * @param  int                  $window_index
-     * @param  base_learner_profile $profile
-     * @param  bool                 $allow_replies  Whether students may reply.
-     * @return int                  Log entries written.
-     */
-    private function simulate_announcements(
-        int $userid,
-        int $courseid,
-        int $window_index,
-        base_learner_profile $profile,
-        bool $allow_replies
-    ): int {
-        $written = 0;
-
-        $announcements_cm = $this->scanner->get_announcements_forum();
-        if ($announcements_cm === null) {
-            return 0;
-        }
-
-        $activity = $this->cm_to_descriptor($announcements_cm, 0);
-        $unread   = $this->scanner->get_unread_posts($announcements_cm->instance, $userid);
-
-        foreach ($unread as $post) {
-            // Passive roll: read this announcement.
-            if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
-                continue;
-            }
-
-            $this->log_writer->write_forum_read(
-                $userid,
-                (int)$post->postid,
-                (int)$post->discussionid,
-                (int)$post->forumid
-            );
-
-            $this->log_writer->write_action(
-                $userid,
-                $courseid,
-                'read_announcement',
-                $activity,
-                (int)$post->postid,
-                null,
-                (int)$post->authorid
-            );
-            $written++;
-
-            // Active roll: reply to announcement (if permitted).
-            if ($allow_replies &&
-                $profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
-                $this->log_writer->write_action(
-                    $userid,
-                    $courseid,
-                    'reply_forum',
-                    $activity,
-                    (int)$post->postid,
-                    "posted",
-                    (int)$post->authorid
-                );
-                $written++;
-            }
-        }
-
-        return $written;
-    }
-
-    /**
-     * Converts a cm_info object to a minimal activity descriptor stdClass
-     * compatible with log_writer::write_action().
-     *
-     * Used for the announcements forum, which is returned as a cm_info by
-     * content_scanner::get_announcements_forum().
-     *
-     * @param  \cm_info $cm
-     * @param  int      $section 1-based section number (0 for course header).
-     * @return \stdClass
-     */
-    private function cm_to_descriptor(\cm_info $cm, int $section): \stdClass {
-        $d             = new \stdClass();
-        $d->type       = 'forum';
-        $d->cmid       = (int)$cm->id;
-        $d->instanceid = (int)$cm->instance;
-        $d->name       = $cm->name;
-        $d->section    = $section;
-        $d->duedate    = null;
-        return $d;
-    }
-
-    /**
-     * Forum: read unread posts (passive), reply to some (active), post new (active).
-     *
-     * Queries forum_read via content_scanner at execution time to find posts
-     * this user has not yet read. Students who execute later in the window
-     * naturally see more unread posts from peers who executed earlier.
-     *
-     * For each unread post:
-     *   passive roll → write_forum_read() + read_forum logstore entry (relateduserid = post author)
-     *   if read: active roll → reply_forum logstore entry (relateduserid = post author)
-     *
-     * New post (active roll, independent of reads):
-     *   active roll → post_forum with generated text
+     * Passive path (independent of active, runs regardless):
+     *   - Read up to profile->get_max_forum_reads_per_window() unread discussions.
+     *   - Each read fires a discussion_viewed event (which populates forum_read).
      *
      * @return int
      */
@@ -434,97 +276,383 @@ class student_actor {
         int $window_index,
         base_learner_profile $profile
     ): int {
+        global $DB, $CFG;
+
         $written = 0;
 
-        // --- Read unread posts ---
-        $unread = $this->scanner->get_unread_posts($activity->instanceid, $userid);
+        // --- Active path ---
+        if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
+            $existing = $this->scanner->get_user_discussion($activity->instanceid, $userid);
 
-        foreach ($unread as $post) {
-            if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
-                continue;
-            }
-
-            $this->log_writer->write_forum_read(
-                $userid,
-                (int)$post->postid,
-                (int)$post->discussionid,
-                (int)$post->forumid
-            );
-
-            $this->log_writer->write_action(
-                $userid,
-                $courseid,
-                'read_forum',
-                $activity,
-                (int)$post->postid,
-                null,
-                (int)$post->authorid
-            );
-            $written++;
-
-            if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
-                $this->log_writer->write_action(
-                    $userid,
-                    $courseid,
-                    'reply_forum',
-                    $activity,
-                    (int)$post->postid,
-                    "posted",
-                    (int)$post->authorid
-                );
-                $written++;
+            if ($existing === null) {
+                // Create a new discussion.
+                $written += $this->create_forum_discussion($userid, $courseid, $activity);
+            } else {
+                // Reply to another student's discussion.
+                $written += $this->reply_to_forum_discussion($userid, $courseid, $activity);
             }
         }
 
-        // --- Post new content (independent active roll) ---
-        if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
-            $this->log_writer->write_action(
-                $userid,
-                $courseid,
-                'post_forum',
-                $activity,
-                null,
-                'posted'
+        // --- Passive path: read unread discussions ---
+        $max_reads   = $profile->get_max_forum_reads_per_window();
+        $reads_done  = 0;
+
+        if ($max_reads > 0 &&
+            $profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
+
+            $unread = $this->scanner->get_unread_discussions($activity->instanceid, $userid);
+
+            foreach ($unread as $disc) {
+                if ($reads_done >= $max_reads) {
+                    break;
+                }
+
+                $switcher = new user_switcher($userid);
+                try {
+                    $this->log_writer->fire_view_event(
+                        $userid,
+                        $courseid,
+                        'read_forum',
+                        $activity,
+                        (int)$disc->discussionid,
+                        null,
+                        (int)$disc->authorid
+                    );
+                } finally {
+                    $switcher->restore();
+                }
+
+                $written++;
+                $reads_done++;
+            }
+        }
+
+        return $written;
+    }
+
+    /**
+     * Creates a new forum discussion using forum_add_discussion().
+     *
+     * @param  int      $userid
+     * @param  int      $courseid
+     * @param  \stdClass $activity
+     * @return int      Number of actions written (1 on success, 0 on failure).
+     */
+    private function create_forum_discussion(int $userid, int $courseid, \stdClass $activity): int {
+        global $DB;
+
+        $forum = $DB->get_record('forum', ['id' => $activity->instanceid], '*', MUST_EXIST);
+
+        $discussion              = new \stdClass();
+        $discussion->course      = $courseid;
+        $discussion->forum       = $activity->instanceid;
+        $discussion->name        = $this->namegen->get_discussion_subject();
+        $discussion->message     = $this->namegen->get_post_text();
+        $discussion->messageformat = FORMAT_PLAIN;
+        $discussion->messagetrust = 0;
+        $discussion->attachmentid = null;
+        $discussion->timelocked  = 0;
+        $discussion->mailnow     = 0;
+        $discussion->timestart   = 0;
+        $discussion->timeend     = 0;
+
+        $switcher = new user_switcher($userid);
+        try {
+            $discussionid = forum_add_discussion($discussion);
+        } finally {
+            $switcher->restore();
+        }
+
+        if (!$discussionid) {
+            mtrace("    Warning: forum_add_discussion() returned false for user $userid in forum {$activity->instanceid}");
+            return 0;
+        }
+
+        // The first post of the discussion is the one with parent=0.
+        $firstpost = $DB->get_record_select(
+            'forum_posts',
+            'discussion = :did AND parent = 0',
+            ['did' => $discussionid]
+        );
+
+        $this->log_writer->record_api_action(
+            $userid, $courseid, 'post_forum', $activity,
+            $firstpost ? (int)$firstpost->id : null,
+            'posted'
+        );
+
+        return 1;
+    }
+
+    /**
+     * Replies to a randomly chosen discussion started by another student.
+     *
+     * If no other discussions exist yet (student is the first to act in this
+     * forum), skips gracefully and returns 0.
+     *
+     * @param  int      $userid
+     * @param  int      $courseid
+     * @param  \stdClass $activity
+     * @return int      Number of actions written (1 on success, 0 if no target).
+     */
+    private function reply_to_forum_discussion(int $userid, int $courseid, \stdClass $activity): int {
+        global $DB;
+
+        $others = $this->scanner->get_other_discussions($activity->instanceid, $userid);
+
+        if (empty($others)) {
+            // No other discussions to reply to yet — skip gracefully.
+            $this->log_writer->record_api_action(
+                $userid, $courseid, 'reply_forum', $activity, null, 'no_reply_target'
             );
+            return 0;
+        }
+
+        // Pick a random discussion to reply to.
+        $target_discussion = $others[array_rand($others)];
+
+        // Get the first post of that discussion as the parent.
+        $parent_post = $DB->get_record_select(
+            'forum_posts',
+            'discussion = :did AND parent = 0',
+            ['did' => $target_discussion->id],
+            '*',
+            MUST_EXIST
+        );
+
+        $post              = new \stdClass();
+        $post->discussion  = $target_discussion->id;
+        $post->parent      = $parent_post->id;
+        $post->userid      = $userid;
+        $post->message     = $this->namegen->get_post_text();
+        $post->messageformat = FORMAT_PLAIN;
+        $post->messagetrust  = 0;
+        $post->attachments   = null;
+        $post->mailnow       = 0;
+
+        $switcher = new user_switcher($userid);
+        try {
+            $postid = forum_add_post($post);
+        } finally {
+            $switcher->restore();
+        }
+
+        if (!$postid) {
+            mtrace("    Warning: forum_add_post() returned false for user $userid");
+            return 0;
+        }
+
+        $this->log_writer->record_api_action(
+            $userid, $courseid, 'reply_forum', $activity,
+            (int)$postid,
+            'posted'
+        );
+
+        return 1;
+    }
+
+    // =========================================================================
+    // Private: assignment
+    // =========================================================================
+
+    /**
+     * Assignment: submit (active) or view only (passive).
+     *
+     * Uses the assign API for submissions. Submits online text content
+     * generated by name_generator.
+     *
+     * @return int
+     */
+    private function simulate_assignment(
+        int $userid,
+        int $courseid,
+        \stdClass $activity,
+        int $window_index,
+        base_learner_profile $profile
+    ): int {
+        global $DB;
+
+        $written = 0;
+
+        if ($profile->should_engage(base_learner_profile::ACTION_ACTIVE, $window_index, $this->total_windows)) {
+
+            // Check if student has already submitted this assignment.
+            $existing = $DB->get_record('assign_submission', [
+                'assignment' => $activity->instanceid,
+                'userid'     => $userid,
+                'status'     => 'submitted',
+            ]);
+
+            if ($existing) {
+                // Already submitted — view only.
+                $switcher = new user_switcher($userid);
+                try {
+                    $this->log_writer->fire_view_event($userid, $courseid, 'view_assignment', $activity, $activity->instanceid);
+                } finally {
+                    $switcher->restore();
+                }
+                return 1;
+            }
+
+            // Submit via assign API.
+            $switcher = new user_switcher($userid);
+            try {
+                $assign = new \assign(\context_module::instance($activity->cmid), null, null);
+                $submissionid = $this->do_assign_submission($assign, $userid, $activity);
+            } finally {
+                $switcher->restore();
+            }
+
+            if ($submissionid) {
+                $this->log_writer->record_api_action(
+                    $userid, $courseid, 'submit_assignment', $activity,
+                    $submissionid, 'submitted'
+                );
+                $written++;
+            }
+
+        } else if ($profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
+            // Viewed but did not submit.
+            $switcher = new user_switcher($userid);
+            try {
+                $this->log_writer->fire_view_event(
+                    $userid, $courseid, 'view_assignment', $activity,
+                    $activity->instanceid, 'viewed_only'
+                );
+            } finally {
+                $switcher->restore();
+            }
             $written++;
         }
 
         return $written;
     }
 
-    // -------------------------------------------------------------------------
-    // Private: verbose helpers
-    // -------------------------------------------------------------------------
-
-    /** @var array<int,string> Username cache for verbose output. */
-    private array $username_cache = [];
-
     /**
-     * Returns the username for a userid, caching the result.
-     * Used only in verbose mode to avoid repeated DB queries.
+     * Creates an online text submission for the given assignment.
      *
-     * @param  int    $userid
-     * @return string
+     * Uses the assign API's save_submission() pathway, which is the
+     * same route the student-facing form uses. This ensures the submission
+     * record, submission plugin record, and event all fire correctly.
+     *
+     * @param  \assign   $assign
+     * @param  int       $userid
+     * @param  \stdClass $activity
+     * @return int|null  assign_submission.id on success, null on failure.
      */
-    private function get_username(int $userid): string {
-        if (!isset($this->username_cache[$userid])) {
-            global $DB;
-            $this->username_cache[$userid] = $DB->get_field('user', 'username', ['id' => $userid]) ?? "user$userid";
+    private function do_assign_submission(\assign $assign, int $userid, \stdClass $activity): ?int {
+        global $DB;
+
+        // Build the submission data object that assign expects.
+        // This replicates the structure that mod/assign/locallib.php uses
+        // when processing a submission form.
+        $data                            = new \stdClass();
+        $data->onlinetext_editor         = [
+            'text'   => $this->namegen->get_post_text(),
+            'format' => FORMAT_PLAIN,
+            'itemid' => 0,
+        ];
+
+        // save_submission() writes the submission record and fires the event.
+        // It expects $USER to be the submitting student (set by user_switcher).
+        try {
+            $assign->save_submission($data, $notices);
+        } catch (\Throwable $e) {
+            mtrace("    Warning: assign save_submission() failed for user $userid: " . $e->getMessage());
+            return null;
         }
-        return $this->username_cache[$userid];
+
+        // Retrieve the submission record we just created.
+        $submission = $DB->get_record('assign_submission', [
+            'assignment' => $activity->instanceid,
+            'userid'     => $userid,
+        ]);
+
+        if (!$submission) {
+            return null;
+        }
+
+        // Mark as submitted (save_submission saves as draft by default).
+        $submission->status = ASSIGN_SUBMISSION_STATUS_SUBMITTED;
+        $DB->update_record('assign_submission', $submission);
+
+        return (int)$submission->id;
     }
 
-    // -------------------------------------------------------------------------
-    // Private: grade-view weighting
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Private: announcements
+    // =========================================================================
 
     /**
-     * Returns true if the student should view their grades this window.
+     * Reads unread announcements posted by instructors.
      *
-     * Probability scales linearly from 0 at window 0 to the student's full
-     * passive engagement probability at the final window. This reflects the
-     * realistic pattern of grade-checking becoming more common as assessments
-     * accumulate through the term.
+     * Each unread announcement discussion fires a discussion_viewed event,
+     * which populates forum_read and writes to the logstore.
+     *
+     * @param  int                  $userid
+     * @param  int                  $courseid
+     * @param  int                  $window_index
+     * @param  base_learner_profile $profile
+     * @return int
+     */
+    private function simulate_announcements(
+        int $userid,
+        int $courseid,
+        int $window_index,
+        base_learner_profile $profile
+    ): int {
+        $written = 0;
+
+        $announcements_cm = $this->scanner->get_announcements_forum();
+        if ($announcements_cm === null) {
+            return 0;
+        }
+
+        // Build a minimal activity descriptor for the announcements forum.
+        $activity             = new \stdClass();
+        $activity->type       = 'forum';
+        $activity->cmid       = (int)$announcements_cm->id;
+        $activity->instanceid = (int)$announcements_cm->instance;
+        $activity->name       = $announcements_cm->name;
+        $activity->section    = 0;
+        $activity->duedate    = null;
+
+        $unread = $this->scanner->get_unread_discussions((int)$announcements_cm->instance, $userid);
+
+        foreach ($unread as $disc) {
+            if (!$profile->should_engage(base_learner_profile::ACTION_PASSIVE, $window_index, $this->total_windows)) {
+                continue;
+            }
+
+            $switcher = new user_switcher($userid);
+            try {
+                $this->log_writer->fire_view_event(
+                    $userid, $courseid,
+                    'read_announcement',
+                    $activity,
+                    (int)$disc->discussionid,
+                    null,
+                    (int)$disc->authorid
+                );
+            } finally {
+                $switcher->restore();
+            }
+
+            $written++;
+        }
+
+        return $written;
+    }
+
+    // =========================================================================
+    // Private: grade-view weighting
+    // =========================================================================
+
+    /**
+     * Returns true if the student should view grades this window.
+     *
+     * Probability scales linearly from 0 at window 0 to full passive
+     * probability at the final window.
      *
      * @param  int                  $window_index
      * @param  base_learner_profile $profile
@@ -535,10 +663,8 @@ class student_actor {
             return false;
         }
 
-        // Linear weight: 0.0 at first window, 1.0 at last window.
         $weight = $window_index / ($this->total_windows - 1);
 
-        // Apply weight as an additional multiplier on a passive engagement roll.
         $base_p = $profile->get_base_probability(base_learner_profile::ACTION_PASSIVE)
                 * $profile->get_diligence_scalar()
                 * $weight;
@@ -546,5 +672,24 @@ class student_actor {
         $base_p = max(0.0, min(1.0, $base_p));
 
         return (mt_rand(1, 1000) / 1000.0) <= $base_p;
+    }
+
+    // =========================================================================
+    // Private: verbose helper
+    // =========================================================================
+
+    /** @var array<int,string> Username cache for verbose output. */
+    private array $username_cache = [];
+
+    /**
+     * @param  int    $userid
+     * @return string
+     */
+    private function get_username(int $userid): string {
+        if (!isset($this->username_cache[$userid])) {
+            global $DB;
+            $this->username_cache[$userid] = $DB->get_field('user', 'username', ['id' => $userid]) ?? "user$userid";
+        }
+        return $this->username_cache[$userid];
     }
 }

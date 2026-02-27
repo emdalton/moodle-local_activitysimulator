@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="local/activitysimulator/db" VERSION="20260223" COMMENT="XMLDB file for local_activitysimulator"
+<XMLDB PATH="local/activitysimulator/db" VERSION="20260228" COMMENT="XMLDB file for local_activitysimulator"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd">
   <TABLES>
@@ -112,8 +112,9 @@
         <FIELD NAME="action_type"    TYPE="char" LENGTH="32" NOTNULL="true" COMMENT="e.g. view_page, attempt_quiz, submit_assignment, post_forum"/>
         <FIELD NAME="action_class"   TYPE="char" LENGTH="8"  NOTNULL="true" COMMENT="passive or active"/>
         <FIELD NAME="cmid"           TYPE="int"  LENGTH="10" NOTNULL="false" COMMENT="FK to Moodle course_modules.id; null for course-level actions"/>
-        <FIELD NAME="simulated_time" TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Backdated Unix timestamp written to Moodle logs/grades"/>
-        <FIELD NAME="outcome"        TYPE="char" LENGTH="16" NOTNULL="false" COMMENT="e.g. score_90, submitted, skipped"/>
+        <FIELD NAME="objectid"       TYPE="int"  LENGTH="10" NOTNULL="false" COMMENT="ID of created Moodle object (forum_post.id, quiz_attempts.id, etc.)"/>
+        <FIELD NAME="simulated_time" TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Target timestamp from window schedule; stored for reference only, not written to any Moodle core table"/>
+        <FIELD NAME="outcome"        TYPE="char" LENGTH="32" NOTNULL="false" COMMENT="e.g. score_90, submitted, skipped, viewed_only"/>
         <FIELD NAME="timecreated"    TYPE="int"  LENGTH="10" NOTNULL="true" COMMENT="Actual wall-clock time this record was inserted"/>
       </FIELDS>
       <KEYS>
