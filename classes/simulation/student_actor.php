@@ -307,6 +307,15 @@ class student_actor {
                     break;
                 }
 
+                // discussion_viewed requires relateduserid = discussion author.
+                // This is the directed edge in social network analysis: viewer -> author.
+                // Skip the event entirely if authorid is missing — a false edge
+                // is worse than a missing one for SNA purposes.
+                $authorid = (int)$disc->authorid;
+                if ($authorid === 0) {
+                    mtrace("    Warning: discussion {$disc->discussionid} has no authorid, skipping read_forum event");
+                    continue;
+                }
                 $switcher = new user_switcher($userid);
                 try {
                     $this->log_writer->fire_view_event(
@@ -316,7 +325,7 @@ class student_actor {
                         $activity,
                         (int)$disc->discussionid,
                         null,
-                        (int)$disc->authorid
+                        $authorid
                     );
                 } finally {
                     $switcher->restore();
@@ -358,7 +367,7 @@ class student_actor {
 
         $switcher = new user_switcher($userid);
         try {
-            $discussionid = forum_add_discussion($discussion);
+            $discussionid = \forum_add_discussion($discussion);
         } finally {
             $switcher->restore();
         }
@@ -432,7 +441,7 @@ class student_actor {
 
         $switcher = new user_switcher($userid);
         try {
-            $postid = forum_add_post($post);
+            $postid = \forum_add_post($post);
         } finally {
             $switcher->restore();
         }
@@ -624,6 +633,13 @@ class student_actor {
                 continue;
             }
 
+            // discussion_viewed requires relateduserid = discussion author.
+            // Directed edge for SNA: student -> instructor who posted announcement.
+            $authorid = (int)$disc->authorid;
+            if ($authorid === 0) {
+                mtrace("    Warning: announcement {$disc->discussionid} has no authorid, skipping read_announcement event");
+                continue;
+            }
             $switcher = new user_switcher($userid);
             try {
                 $this->log_writer->fire_view_event(
@@ -632,7 +648,7 @@ class student_actor {
                     $activity,
                     (int)$disc->discussionid,
                     null,
-                    (int)$disc->authorid
+                    $authorid
                 );
             } finally {
                 $switcher->restore();

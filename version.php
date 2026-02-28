@@ -28,7 +28,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component    = 'local_activitysimulator';
-$plugin->version      = 2026022801;
+$plugin->version      = 2026022802;
 $plugin->requires     = 2024100700;   // Minimum Moodle 4.5.
 $plugin->maturity     = MATURITY_ALPHA;
-$plugin->release      = '0.5.1';
+$plugin->release      = '0.5.2';

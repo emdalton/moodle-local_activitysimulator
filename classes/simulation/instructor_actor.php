@@ -240,7 +240,7 @@ class instructor_actor {
 
         $switcher = new user_switcher($userid);
         try {
-            $discussionid = forum_add_discussion($discussion);
+            $discussionid = \forum_add_discussion($discussion);
         } finally {
             $switcher->restore();
         }
@@ -365,7 +365,7 @@ class instructor_actor {
 
         $switcher = new user_switcher($userid);
         try {
-            $postid = forum_add_post($post);
+            $postid = \forum_add_post($post);
         } finally {
             $switcher->restore();
         }
