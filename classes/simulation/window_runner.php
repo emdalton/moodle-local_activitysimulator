@@ -28,9 +28,10 @@ namespace local_activitysimulator\simulation;
 
 defined('MOODLE_INTERNAL') || die();
 
-require_once($CFG->dirroot . '/lib/enrollib.php');
-require_once($CFG->dirroot . '/mod/forum/lib.php');   // forum_add_discussion(), forum_add_post().
-require_once($CFG->dirroot . '/mod/assign/locallib.php'); // assign class for submission API.
+// mod/forum/lib.php, mod/assign/locallib.php, and lib/enrollib.php are
+// require_once'd by cli/run_window.php before this class is autoloaded.
+// Do not add require_once here: this file is PSR-4 autoloaded and $CFG
+// may not be fully initialised at the point the autoloader resolves it.
 
 use local_activitysimulator\manager\term_manager;
 use local_activitysimulator\manager\user_manager;

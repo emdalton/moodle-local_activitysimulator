@@ -41,6 +41,27 @@ if (!file_exists($moodle_root . '/config.php')) {
 require($moodle_root . '/config.php');
 require_once($CFG->libdir . '/clilib.php');
 
+// Moodle API libraries required by window_runner, student_actor, and instructor_actor.
+// These must be require_once'd here in the CLI entry point — after config.php has
+// fully initialised $CFG — rather than in the class files themselves. Class files
+// in classes/simulation/ are loaded via PSR-4 autoloader at an indeterminate time
+// when $CFG->dirroot may not yet be available, causing require_once to silently
+// load nothing and leaving forum_add_discussion() / forum_add_post() undefined.
+//
+// WARNING: This placement only works for CLI invocation. When window execution is
+// moved to a Moodle scheduled task, these require_once calls must be moved inside
+// the individual methods that use them (post_announcement(), reply_to_discussion(),
+// post_to_forum(), reply_to_forum_discussion()) so they execute after $CFG is
+// available regardless of entry point. See README.md — "Known limitations".
+require_once($CFG->dirroot . '/lib/enrollib.php');
+require_once($CFG->dirroot . '/mod/forum/lib.php');        // forum_add_discussion(), forum_add_post().
+require_once($CFG->dirroot . '/mod/assign/locallib.php');  // assign class for submission API.
+
+// Suppress all outbound email during simulation. Simulated users have
+// .invalid email domains which cause debug noise on every API action
+// that triggers a notification (assignment submissions, forum posts, etc.).
+$CFG->noemailever = true;
+
 use local_activitysimulator\manager\term_manager;
 use local_activitysimulator\manager\user_manager;
 use local_activitysimulator\simulation\window_runner;

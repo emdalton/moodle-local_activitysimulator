@@ -241,6 +241,31 @@ Options: `--term=ID`, `--window=ID`, `--limit=N`, `--force`, `--list` / `-l`, `-
 
 ---
 
+## Known limitations
+
+### `require_once` for forum/assign APIs only works via CLI
+
+`cli/run_window.php` loads `mod/forum/lib.php` and `mod/assign/locallib.php` after
+`config.php` has fully initialised `$CFG`. This works correctly for CLI invocation.
+
+**It will not work when windows are run via a Moodle scheduled task.** The task
+runner is Moodle's own cron entry point, not our CLI script, so these `require_once`
+calls never execute and `forum_add_discussion()` / `forum_add_post()` will be
+undefined.
+
+**Before implementing scheduled task execution of windows**, move the `require_once`
+calls into the individual methods that use them:
+- `instructor_actor::post_announcement()` → needs `mod/forum/lib.php`
+- `instructor_actor::reply_to_discussion()` → needs `mod/forum/lib.php`
+- `student_actor::post_to_forum()` → needs `mod/forum/lib.php`
+- `student_actor::reply_to_forum_discussion()` → needs `mod/forum/lib.php`
+- Any assignment submission methods → need `mod/assign/locallib.php`
+
+`require_once` is idempotent so there is no performance cost to including it in
+multiple methods.
+
+---
+
 ## Build status
 
 | Component | Status |
