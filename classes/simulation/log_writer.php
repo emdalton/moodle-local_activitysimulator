@@ -258,61 +258,60 @@ class log_writer {
         $classname = $map['class'];
 
         // Base data common to all events.
+        // NOTE: do not set objectid in the base array — only set it per-case
+        // for events whose init() method declares an objecttable. Moodle throws
+        // a coding_exception if objectid is present without a matching objecttable.
         $data = [
             'context'  => $context,
             'courseid' => $courseid,
         ];
-
-        if ($objectid !== null) {
-            $data['objectid'] = $objectid;
-        }
 
         if ($relateduserid !== null) {
             $data['relateduserid'] = $relateduserid;
         }
 
         // Per-event-class variations.
+        // Only set objectid for events whose class declares objecttable in init().
         switch ($action_type) {
 
             case 'view_page':
-                // \mod_page\event\course_module_viewed requires objectid = page instance id.
+                // objecttable = 'page'
                 $data['objectid'] = $activity->instanceid;
                 break;
 
             case 'view_forum':
-                // \mod_forum\event\course_module_viewed requires objectid = forum instance id.
+                // objecttable = 'forum'
                 $data['objectid'] = $activity->instanceid;
                 break;
 
             case 'read_forum':
             case 'read_announcement':
-                // \mod_forum\event\discussion_viewed requires objectid = discussion id.
-                // objectid is passed in as the discussion id by the caller.
+                // objecttable = 'forum_discussions', objectid = discussion id passed by caller
+                $data['objectid'] = $objectid;
                 break;
 
             case 'view_assignment':
-                // \mod_assign\event\course_module_viewed requires objectid = assign instance id.
+                // objecttable = 'assign'
                 $data['objectid'] = $activity->instanceid;
                 break;
 
             case 'view_quiz_grade':
-                // \mod_quiz\event\attempt_reviewed requires objectid = attempt id.
-                // objectid is passed in as the attempt id by the caller.
-                $data['other'] = ['attemptid' => $objectid];
+                // objecttable = 'quiz_attempts', objectid = attempt id passed by caller
+                $data['objectid'] = $objectid;
+                $data['other']    = ['attemptid' => $objectid];
                 break;
 
             case 'view_course':
-                // \core\event\course_viewed requires objectid = course id.
-                $data['objectid'] = $courseid;
+                // \core\event\course_viewed has no objecttable — do not set objectid.
                 break;
 
             case 'view_grades':
-                // \gradereport_user\event\grade_report_viewed requires other[courseid].
+                // no objecttable
                 $data['other'] = ['courseid' => $courseid];
                 break;
 
             case 'view_gradebook':
-                // \gradereport_grader\event\grade_report_viewed requires other[courseid].
+                // no objecttable
                 $data['other'] = ['courseid' => $courseid];
                 break;
         }

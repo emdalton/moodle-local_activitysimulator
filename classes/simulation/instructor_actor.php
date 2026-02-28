@@ -29,6 +29,7 @@ namespace local_activitysimulator\simulation;
 defined('MOODLE_INTERNAL') || die();
 
 require_once($GLOBALS['CFG']->dirroot . '/mod/forum/lib.php');
+require_once($GLOBALS['CFG']->dirroot . '/mod/assign/locallib.php');
 
 use local_activitysimulator\data\name_generator;
 
@@ -293,6 +294,13 @@ class instructor_actor {
             }
 
             // Fire discussion_viewed event.
+            // discussion_viewed requires relateduserid = discussion author.
+            // Directed edge for SNA: instructor -> student whose post was read.
+            $authorid = (int)$disc->authorid;
+            if ($authorid === 0) {
+                mtrace("    Warning: discussion {$disc->discussionid} has no authorid, skipping read_forum event");
+                continue;
+            }
             $switcher = new user_switcher($userid);
             try {
                 $this->log_writer->fire_view_event(
@@ -302,7 +310,7 @@ class instructor_actor {
                     $activity,
                     (int)$disc->discussionid,
                     null,
-                    (int)$disc->authorid
+                    $authorid
                 );
             } finally {
                 $switcher->restore();

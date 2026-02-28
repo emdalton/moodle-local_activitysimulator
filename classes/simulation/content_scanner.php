@@ -249,6 +249,32 @@ class content_scanner {
     public function get_unread_discussions(int $forumid, int $userid): array {
         global $DB;
 
+        // DESIGN DECISION: Direct SQL vs forum_get_discussions() API
+        //
+        // Moodle prefers that plugins use the forum API (forum_get_discussions()
+        // from mod/forum/lib.php) rather than querying forum tables directly, for
+        // schema stability — a future Moodle version could rename or restructure
+        // these tables and break direct SQL without warning.
+        //
+        // We query forum_discussions and forum_posts directly here because:
+        //   1. forum_get_discussions() fetches far more data than we need and
+        //      performs joins we don't require, adding unnecessary overhead when
+        //      called hundreds of times per window across many courses.
+        //   2. forum_discussions.userid is a stable, well-documented column that
+        //      has not changed across any Moodle version we are aware of.
+        //   3. We need a LEFT JOIN against forum_read to find unread discussions
+        //      in a single query, which the API does not support directly.
+        //
+        // fd.userid AS authorid is the directed edge source for social network
+        // analysis: when a user reads a discussion, the (reader, author) pair
+        // forms an edge in the reading network graph. This must be a real userid
+        // from forum_discussions.userid — a fabricated fallback value would
+        // corrupt the SNA data.
+        //
+        // If this plugin is submitted to the Moodle plugin directory, this direct
+        // SQL access should be replaced with forum API calls for compliance with
+        // Moodle's coding guidelines.
+        //
         // A discussion's "first post" is the post where forum_posts.parent = 0
         // within that discussion. We check forum_read against that post id.
         $sql = "SELECT fd.id AS discussionid,

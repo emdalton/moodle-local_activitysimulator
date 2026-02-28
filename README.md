@@ -54,13 +54,23 @@ Data helpers
 
 ## Key design decisions
 
-### Backdating via direct DB writes
+### Real Moodle API approach — no direct core table writes
 
-Moodle's event system does not allow the `timecreated` timestamp to be overridden — events fire with the current time. To generate historically accurate log data, `log_writer` inserts rows directly into `logstore_standard_log` rather than going through the event API. This is intentional and appropriate for a simulation plugin on a test instance. The tradeoff is that these entries will not trigger any real-time event observers, which is acceptable since the goal is to produce analytics data, not to drive live Moodle behaviour.
+All simulated activity is created through real Moodle APIs (`forum_add_discussion()`, `forum_add_post()`, the `assign` API) with `$USER` temporarily switched to the simulated user. All view and read events fire real Moodle event classes (`\mod_forum\event\discussion_viewed`, `\core\event\course_viewed`, etc.) so that event observers run correctly — including the forum read-tracking observer that populates `forum_read`.
+
+The plugin never writes directly to `logstore_standard_log`, `forum_posts`, `forum_discussions`, `assign_submission`, or any other Moodle core table. All logstore entries are produced as natural side effects of the API calls and event triggers. This means all Moodle-internal consistency guarantees hold: foreign keys, caches, and observer chains are all maintained correctly.
+
+The tradeoff is that simulated data carries real wall-clock timestamps. A future enhancement could apply a uniform timestamp delta across all tables after a simulation run, but this is not implemented — see *Timestamp note* below.
+
+### Timestamp note — no backdating
+
+Timestamps in Moodle core tables (logstore, forum posts, etc.) reflect the actual wall-clock time of the simulation run. `run_log.simulated_time` records the target time-of-day from the window schedule for reference only; it is not applied to any core table.
+
+Backdating was explored and rejected. Moodle maintains many interdependent timestamp fields across related tables when events fire. Attempting to patch individual fields after the fact would miss dependencies and risk data corruption. A future approach would be a separate tool that computes the delta between the simulation run time and the target historical date, then applies it uniformly across all affected tables in a single coordinated update.
 
 ### Activity window model
 
-Rather than simulating continuous activity, the plugin uses a discrete **activity window** model. A window is a named time slot (e.g. "Monday AM", "Week 3 Early") defined by the course profile. The daily scheduled task finds pending windows whose `scheduled_time` has passed and runs them. Within a window, log entry timestamps are randomly distributed across the configured AM or PM time range (default 08:00–12:00 and 13:00–17:00), giving realistic within-window variation.
+Rather than simulating continuous activity, the plugin uses a discrete **activity window** model. A window is a named time slot (e.g. "Monday AM", "Week 3 Early") defined by the course profile. The daily scheduled task finds pending windows whose `scheduled_time` has passed and runs them. Within a window, `run_log.simulated_time` values are randomly distributed across the configured AM or PM time range (default 08:00–12:00 and 13:00–17:00), giving realistic within-window variation in the audit log.
 
 This model was chosen because it makes the simulation tractable and testable: each window is an atomic unit of work that can be retried, audited, and reasoned about independently.
 
@@ -80,7 +90,33 @@ P(engage) = base_probability(action_class) × diligence_scalar × decay(window_i
 
 ### Passive vs. active action classification
 
-Every log entry is classified as either `passive` (viewing) or `active` (submitting). This split is recorded in `run_log.action_class` and in the logstore `edulevel` column. It enables the **view/engage split** — a common early-warning signal where a learner's passive views continue even after active submissions stop. The intermittent and failing profiles are specifically tuned to produce this pattern (wider passive/active gap, lower active base probability).
+Every log entry is classified as either `passive` (viewing) or `active` (submitting). This split is recorded in `run_log.action_class`. It enables the **view/engage split** — a common early-warning signal where a learner's passive views continue even after active submissions stop. The intermittent and failing profiles are specifically tuned to produce this pattern (wider passive/active gap, lower active base probability).
+
+### Forum discussion and reply model
+
+The standard student forum pattern follows common online course pedagogy: each student must create one original discussion thread, then reply to at least two peers. The simulation implements this as follows:
+
+- **Active roll**: if the student has not yet started a discussion in this forum, `forum_add_discussion()` is called. If they already have one, `forum_add_post()` replies to a randomly chosen discussion started by another student.
+- **Passive roll**: the student reads up to `get_max_forum_reads_per_window()` unread discussions. Overachievers read everything; standard learners read up to 2; intermittent learners read at most 1; failing learners read 0.
+
+Reading a discussion fires `\mod_forum\event\discussion_viewed`, which populates `forum_read` via Moodle's built-in observer. This is critical for social network analysis — see *Forum read tracking and social network analysis* below.
+
+### Forum read tracking and social network analysis
+
+`\mod_forum\event\discussion_viewed` requires a `relateduserid` field identifying the discussion author. This creates a directed edge in `logstore_standard_log`: `userid` (the reader) → `relateduserid` (the author). These directed edges are the foundation of a reading network graph suitable for social network analysis.
+
+The `relateduserid` value is the `userid` field from `forum_discussions` — the user who started the thread. If this value cannot be determined for a given discussion, the event is skipped entirely rather than recorded with a fabricated author. A false edge in an SNA graph is worse than a missing one.
+
+### Direct SQL access to `forum_discussions` — known Moodle coding guideline deviation
+
+`content_scanner::get_unread_discussions()` queries `forum_discussions` and `forum_posts` directly via SQL rather than using the `forum_get_discussions()` API function. This is a deliberate deviation from Moodle's coding guidelines, which prefer API access for schema stability.
+
+The direct SQL approach was chosen because:
+1. `forum_get_discussions()` fetches significantly more data than needed and performs additional joins, adding overhead when called hundreds of times per window across many courses.
+2. The query requires a `LEFT JOIN` against `forum_read` to find unread discussions in a single pass, which the API does not support directly.
+3. `forum_discussions.userid` is a stable, well-documented column with no history of breaking changes.
+
+**If this plugin is submitted to the Moodle plugin directory**, this direct SQL should be replaced with API calls for compliance with Moodle's coding guidelines. The risk is low for a dedicated test-instance plugin, but should be revisited before any public release.
 
 ### Student distribution and the sliding window enrolment model
 
@@ -110,17 +146,13 @@ Forum posts use text from Edward Lear's nonsense alphabet (26 verses, public dom
 
 All generative text (names, course titles, section labels, forum post bodies) is stored in the lang file rather than hardcoded in PHP. This allows content to be customised via Moodle's standard lang override mechanism without modifying plugin files.
 
-### Backfill mode
-
-When a term is created with a start date in the past, the plugin can immediately simulate all elapsed windows with appropriately backdated timestamps. This allows a full semester of realistic data to be generated in a single run rather than waiting for windows to become due day by day. The maximum backfill depth is configurable (default 20 weeks) to prevent accidental generation of unreasonably large datasets.
-
 ### Synthetic user conventions
 
 Usernames follow a SIS-style convention with a group prefix and zero-padded sequence number: `a001`–`a050` (overachievers), `b001`–`b350` (standard), `c001`–`c050` (intermittent), `f001`–`f050` (failing), `t001`–`t002` (instructors). All users are assigned to a "Simulated Users" cohort for easy identification and bulk management. Email addresses use the `.invalid` TLD (RFC-reserved) so they can never route to real addresses.
 
 ### Ground truth audit log
 
-Every simulated action inserts a row in `local_activitysimulator_run_log` in addition to the logstore entry. This table records the term, window, course, user, action type, action class (passive/active), activity, backdated timestamp, and outcome. It is the authoritative ground truth for validating analytics results: given a query result, you can check it against the run log to confirm it reflects what was actually simulated.
+Every simulated action inserts a row in `local_activitysimulator_run_log` in addition to any logstore entries produced by the event system. This table records the term, window, course, user, action type, action class (passive/active), activity (cmid), the id of any created Moodle object (`objectid`), a target simulated timestamp (for reference only), and an outcome string. It is the authoritative ground truth for validating analytics results: given a query result from the logstore, you can JOIN to `run_log` via `objectid` to confirm it reflects what was actually simulated.
 
 ---
 
