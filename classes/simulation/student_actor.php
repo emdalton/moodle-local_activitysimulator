@@ -28,8 +28,8 @@ namespace local_activitysimulator\simulation;
 
 defined('MOODLE_INTERNAL') || die();
 
-require_once($GLOBALS['CFG']->dirroot . '/mod/forum/lib.php');
-require_once($GLOBALS['CFG']->dirroot . '/mod/assign/locallib.php');
+// mod/forum/lib.php and mod/assign/locallib.php are require_once'd by window_runner.php
+// before this class is instantiated. Loading them here at autoload time is unreliable.
 
 use local_activitysimulator\learner_profiles\base_learner_profile;
 use local_activitysimulator\data\name_generator;
