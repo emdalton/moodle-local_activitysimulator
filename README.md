@@ -243,6 +243,32 @@ Options: `--term=ID`, `--window=ID`, `--limit=N`, `--force`, `--list` / `-l`, `-
 
 ## Known limitations
 
+### Forum subscriptions on already-created forums
+
+New forums created by this plugin set `subscriptionmode = FORUM_DISALLOWSUBSCRIBE`
+to prevent Moodle's subscription events from firing with missing `relateduserid`
+values. This is set at forum creation time in `term_manager.php`.
+
+**Existing forums created before version 0.5.6** will still have the default
+subscription mode and will continue to produce `relateduserid` errors. To fix
+them, either re-run `cli/setup.php` for a fresh term, or update the forum rows
+directly:
+
+```sql
+UPDATE mdl_forum SET forcesubscribe = 3 WHERE id IN (
+    SELECT cm.instance FROM mdl_course_modules cm
+    JOIN mdl_modules m ON m.id = cm.module
+    WHERE m.name = 'forum'
+    AND cm.course IN (/* your synthetic course ids */)
+);
+```
+
+You can also set the Moodle-wide default at **Site administration → Plugins →
+Activity modules → Forum → Default subscription mode = Subscriptions disabled**.
+This affects new forums created through the UI but does not retroactively change
+existing forums, and does not affect forums created by this plugin (which sets
+the value explicitly).
+
 ### `require_once` for forum/assign APIs only works via CLI
 
 `cli/run_window.php` loads `mod/forum/lib.php` and `mod/assign/locallib.php` after

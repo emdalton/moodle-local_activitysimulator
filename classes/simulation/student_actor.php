@@ -438,10 +438,7 @@ class student_actor {
         $post->messagetrust  = 0;
         $post->attachments   = null;
         $post->mailnow       = 0;
-
-        $switcher = new user_switcher($userid);
-        try {
-            $postid = \forum_add_new_post($post, false);
+        $post->itemid        = 0;  // No draft file area; required by forum_add_new_post.
         } finally {
             $switcher->restore();
         }

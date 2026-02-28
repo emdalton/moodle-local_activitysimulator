@@ -517,7 +517,7 @@ class term_manager {
                 $moduleinfo->type             = 'general';
                 $moduleinfo->maxbytes         = 0;
                 $moduleinfo->maxattachments   = 9;
-                $moduleinfo->forcesubscribe   = 0;
+                $moduleinfo->forcesubscribe   = FORUM_DISALLOWSUBSCRIBE;  // No subscriptions on synthetic forums.
                 $moduleinfo->trackingtype     = 1;
                 $moduleinfo->grade_forum      = 0;
                 $moduleinfo->assessed         = 0;
