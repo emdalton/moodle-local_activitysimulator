@@ -54,7 +54,12 @@ require_once($CFG->libdir . '/clilib.php');
 // post_to_forum(), reply_to_forum_discussion()) so they execute after $CFG is
 // available regardless of entry point. See README.md — "Known limitations".
 require_once($CFG->dirroot . '/lib/enrollib.php');
-require_once($CFG->dirroot . '/mod/forum/lib.php');        // forum_add_discussion(), forum_add_post().
+require_once($CFG->dirroot . '/mod/forum/lib.php');        // forum_add_discussion(), forum_add_new_post().
+if (!function_exists('forum_add_new_post')) {
+    fwrite(STDERR, "FATAL: forum_add_new_post() not defined after require_once of mod/forum/lib.php\n");
+    fwrite(STDERR, "  dirroot: " . $CFG->dirroot . "\n");
+    exit(1);
+}
 require_once($CFG->dirroot . '/mod/assign/locallib.php');  // assign class for submission API.
 
 // Suppress all outbound email during simulation. Simulated users have

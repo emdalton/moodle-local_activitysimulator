@@ -441,13 +441,13 @@ class student_actor {
 
         $switcher = new user_switcher($userid);
         try {
-            $postid = \forum_add_post($post);
+            $postid = \forum_add_new_post($post, false);
         } finally {
             $switcher->restore();
         }
 
         if (!$postid) {
-            mtrace("    Warning: forum_add_post() returned false for user $userid");
+            mtrace("    Warning: forum_add_new_post() returned false for user $userid");
             return 0;
         }
 

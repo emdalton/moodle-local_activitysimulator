@@ -32,6 +32,8 @@ defined('MOODLE_INTERNAL') || die();
 // require_once'd by cli/run_window.php before this class is autoloaded.
 // Do not add require_once here: this file is PSR-4 autoloaded and $CFG
 // may not be fully initialised at the point the autoloader resolves it.
+// Forum API: use forum_add_discussion() and forum_add_new_post() —
+// forum_add_post() was removed in Moodle 4.x.
 
 use local_activitysimulator\manager\term_manager;
 use local_activitysimulator\manager\user_manager;
