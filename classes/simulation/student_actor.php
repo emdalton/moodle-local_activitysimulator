@@ -172,7 +172,8 @@ class student_actor {
         if ($this->should_view_grades($window_index, $profile)) {
             $switcher = new user_switcher($userid);
             try {
-                $this->log_writer->fire_view_event($userid, $courseid, 'view_grades');
+                $this->log_writer->fire_view_event($userid, $courseid, 'view_grades',
+                    null, null, null, $userid);
             } finally {
                 $switcher->restore();
             }
@@ -439,6 +440,10 @@ class student_actor {
         $post->attachments   = null;
         $post->mailnow       = 0;
         $post->itemid        = 0;  // No draft file area; required by forum_add_new_post.
+
+        $switcher = new user_switcher($userid);
+        try {
+            $postid = \forum_add_new_post($post, false);
         } finally {
             $switcher->restore();
         }
